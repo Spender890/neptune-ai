@@ -41,6 +41,9 @@ var/spool/
 data/outgoing/
 
 # System & Editor Caches
+__pycache__/
+*.pyc
+*.pyo
 .DS_Store
 Thumbs.db
 *.swp

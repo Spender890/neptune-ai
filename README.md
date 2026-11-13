@@ -197,8 +197,8 @@ Neptune-AI provides an identical conversational experience whether accessed thro
 ```
 
 1. **Audio Capture:**
-   - **Web Cockpit:** Utilizes HTML5 `MediaRecorder` API recording 16kHz mono audio, packaged into `audio/wav` on push-to-talk button release.
-   - **Asterisk Telephony:** Asterisk records the caller's turn to `/var/spool/asterisk/tmp/user_turn.wav` using silence detection (`Record(...,2,7,k)`).
+   - **Asterisk Telephony (Live Speech):** Asterisk records the caller's turn to `/var/spool/asterisk/tmp/user_turn.wav` using silence detection (`Record(...,2,7,k)`), dispatched to Whisper STT.
+   - **Web Cockpit (Visual & Command Hub):** Provides instant text command submission, interactive reminder management, and real-time telemetry, with client-side push-to-talk state toggling.
 2. **Speech-to-Text (STT):**
    - Transmitted over Wyoming TCP protocol to Whisper.
    - Faster-whisper executes INT8 quantized CPU inference using `base.en` model with beam size 1 for minimum latency.
@@ -208,9 +208,9 @@ Neptune-AI provides an identical conversational experience whether accessed thro
 4. **Text-to-Speech (TTS):**
    - Generated response text is dispatched to Wyoming Piper over TCP.
    - Piper synthesizes 22050Hz raw PCM audio using the ONNX-optimized `en_US-lessac-medium` voice.
-5. **Playback Transcoding:**
-   - For web clients: Audio stream is returned directly as `audio/wav`.
-   - For Asterisk callers: `ffmpeg` transcodes the 22kHz output into Asterisk-native 8kHz mono ULAW/WAV format, streamed into the active call via AGI `STREAM FILE`.
+5. **Playback Transcoding & Delivery:**
+   - **Asterisk Audio:** `ffmpeg` transcodes the 22kHz output into Asterisk-native 8kHz mono ULAW/WAV format, streamed into the active call via AGI `STREAM FILE`.
+   - **Whole-House Speakers:** Transmitted via Home Assistant VLC-Telnet bridge directly to the living room / central amplifier.
 
 ---
 
@@ -267,7 +267,7 @@ Neptune-AI features deep bidirectional television control via Home Assistant's `
 
 ## 9. SIP Telephony Architecture
 
-Neptune-AI integrates an Asterisk 20 PBX container running in host network mode to manage room-to-room communications and autonomous telephone handling.
+Neptune-AI integrates an Asterisk 20 PBX container running on the internal `neptune-net` bridge with dedicated UDP port mappings (`5060/udp` and `10000-10050/udp`) to manage room-to-room communications and autonomous telephone handling.
 
 ```
                                   ASTERISK PBX (PJSIP)
@@ -345,7 +345,7 @@ When a reminder triggers, the daemon automatically dispatches across all configu
 
 ### Step 1: Clone Repository
 ```bash
-git clone https://github.com/your-username/neptune-ai.git /opt/neptune
+git clone https://github.com/Spender890/neptune-ai.git /opt/neptune
 cd /opt/neptune
 ```
 
@@ -389,10 +389,10 @@ bash scripts/verify-phase8-complete-features.sh
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `NODE_ENV` | `production` | Node environment runtime flag |
-| `BACKEND_PORT` | `3000` | Fastify internal HTTP listening port |
-| `OLLAMA_HOST` | `neptune-ollama` | Container DNS hostname for Ollama engine |
-| `OLLAMA_PORT` | `11434` | Ollama API port |
-| `OLLAMA_MODEL` | `qwen2.5:3b` | Local LLM model tag |
+| `NEPTUNE_PORT` | `3000` | Fastify internal HTTP listening port |
+| `NEPTUNE_HOST` | `0.0.0.0` | Backend bind host |
+| `OLLAMA_BASE_URL` | `http://ollama:11434` | Ollama API endpoint on container network |
+| `LLM_MODEL` | `qwen2.5:3b` | Local reasoning model tag |
 | `WHISPER_HOST` | `whisper` | Wyoming Whisper STT service host |
 | `WHISPER_PORT` | `10300` | Wyoming Whisper TCP port |
 | `PIPER_HOST` | `piper` | Wyoming Piper TTS service host |
@@ -402,6 +402,7 @@ bash scripts/verify-phase8-complete-features.sh
 | `JELLYFIN_URL` | `http://jellyfin.local:8096` | Jellyfin Media Server base URL |
 | `JELLYFIN_API_KEY` | `your_api_key` | Jellyfin API authentication key |
 | `ASTERISK_SPOOL_DIR`| `/var/spool/asterisk/outgoing` | Asterisk outgoing call spool directory |
+| `PRIMARY_USER_NAME`| `Primary` | Default user name for contact matching and speech |
 
 ### Contacts Directory (`config/contacts.json`)
 Maps extension numbers to individuals, roles, and recognizable voice aliases:

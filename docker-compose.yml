@@ -56,10 +56,10 @@ services:
       retries: 3
 
   # ----------------------------------------------------------------------------
-  # OLLAMA LOCAL LLM ENGINE (Latest stable release)
+  # OLLAMA LOCAL LLM ENGINE (Pinned to 0.4.16)
   # ----------------------------------------------------------------------------
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.4.16
     container_name: neptune-ollama
     restart: unless-stopped
     environment:

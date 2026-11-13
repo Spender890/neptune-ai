@@ -164,10 +164,10 @@ Log into VM 101 via SSH:
   ```bash
   sudo mkdir -p /opt/neptune
   sudo chown -R $USER:$USER /opt/neptune
+  git clone https://github.com/Spender890/neptune-ai.git /opt/neptune
   cd /opt/neptune
 
-  # Copy repository files here, then execute:
-  chmod +x scripts/setup-debian-vm.sh
+  chmod +x scripts/setup-debian-vm.sh scripts/*.sh scripts/*.py
   sudo ./scripts/setup-debian-vm.sh
   ```
 * **Verification Command:**
@@ -182,22 +182,27 @@ Log into VM 101 via SSH:
 
 ---
 
-### Step C.2: Configure Environment Variables
+### Step C.2: Configure Environment Variables & Service Credentials
 * **Action (Inside Debian VM in `/opt/neptune`):**
   ```bash
+  # 1. Base environment configuration
   cp .env.example .env
   nano .env
+
+  # 2. Contacts and telephony credentials setup
+  cp config/contacts.json.example config/contacts.json
+  cp asterisk/pjsip.conf.example asterisk/pjsip.conf
+  nano asterisk/pjsip.conf  # Set strong unique passwords for extensions 1001, 1002, 7000
   ```
   Confirm:
-  * `HOMEASSISTANT_URL=http://192.168.1.50:8123`
-  * `JELLYFIN_URL=http://192.168.1.60:8096`
-  * `NEPTUNE_DOMAIN=neptune.home.arpa`
+  * `HOMEASSISTANT_URL=http://homeassistant.local:8123` (or your HAOS IP)
+  * `JELLYFIN_URL=http://jellyfin.local:8096` (or your media server IP)
 * **Verification Command:**
   ```bash
-  test -f .env && echo ".env created successfully"
+  test -f .env && test -f config/contacts.json && test -f asterisk/pjsip.conf && echo "Configuration files created successfully"
   ```
 * **Recovery / Rollback:**
-  Delete or re-copy `.env` from `.env.example`.
+  Delete or re-copy files from their corresponding `.example` templates.
 
 ---
 
@@ -211,7 +216,7 @@ Log into VM 101 via SSH:
   ```bash
   sudo docker compose ps
   ```
-  *Expected Output:* All five services (`neptune-caddy`, `neptune-backend`, `neptune-ollama`, `neptune-whisper`, `neptune-piper`) report status `Up` (healthy).
+  *Expected Output:* All six services (`neptune-caddy`, `neptune-backend`, `neptune-ollama`, `neptune-whisper`, `neptune-piper`, `neptune-asterisk`) report status `Up`.
 * **Recovery / Rollback Procedure:**
   ```bash
   sudo docker compose down

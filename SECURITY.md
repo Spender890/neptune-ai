@@ -12,7 +12,7 @@ Security is fundamental to Neptune-AI. A locally hosted assistant must never bec
 4. **Defense-in-Depth for Physical Actions:** High-consequence actions (door locks, garage doors, security alarm panels, master power cutoffs) cannot be executed automatically through speech parsing alone. They require a mandatory confirmation dialog on the client device.
 5. **Secret Isolation:** High-privilege tokens (Home Assistant long-lived tokens, Jellyfin API keys) are restricted to backend server memory and server `.env` files. The frontend client receives zero API secrets.
 6. **No Automatic Host Modification:** Infrastructure scripts provided by Neptune-AI are non-destructive and strictly read-only by default. Scripts never format disks, delete VMs, or modify hypervisor kernel parameters automatically.
-7. **Immutable Local Audit Trail:** Every incoming speech utterance, recognized intent, tool call, parameter set, confirmation response, and Home Assistant response is logged to an append-only SQLite audit table (`/app/data/neptune.sqlite`).
+7. **Structured Container Logging:** Every incoming command, recognized intent, tool call, parameter set, and Home Assistant response is logged as structured JSON via Fastify / Pino stdout logging, captured by the container runtime for auditing and inspection.
 
 ---
 
@@ -21,11 +21,11 @@ Security is fundamental to Neptune-AI. A locally hosted assistant must never bec
 | Threat Vector | Risk Level | Applied Safeguard |
 | :--- | :--- | :--- |
 | **Docker Daemon Privilege Escalation** | Critical | Users are **not** added to the `docker` group. Docker commands require `sudo`. Containers run with non-root internal users where supported (e.g. `node` in backend). |
-| **Prompt Injection / Jailbreak** | High | The LLM does not execute raw instructions as code. Tool invocations are strictly parsed into predefined Zod schemas with entity whitelist checks before interacting with Home Assistant. |
-| **Accidental Physical Actuation** | Critical | Actions affecting doors, locks, or heating systems trigger a `PENDING_CONFIRMATION` event. The action is held for 30 seconds awaiting manual UI approval; unconfirmed actions are discarded. |
+| **Prompt Injection / Jailbreak** | High | The LLM does not execute raw instructions as code. Tool invocations are strictly validated against predefined JSON schemas with entity allowlist checks before interacting with Home Assistant. |
+| **Accidental Physical Actuation** | Critical | Actions affecting high-consequence entities (doors, locks) return `requires_confirmation: true` and prompt the user for explicit confirmation before execution. |
 | **Credential Leakage** | High | The frontend PWA communicates strictly with `/api` and `/ws` over local TLS via Caddy. Client devices never hold Home Assistant bearer tokens or Jellyfin credentials. |
-| **Network Eavesdropping** | Medium | Internal TLS terminates on Caddy with strict HTTP Strict Transport Security (HSTS) and secure WebSocket encapsulation. Standardized domain: `neptune.home.arpa`. |
-| **Denial of Service / Resource Exhaustion** | Medium | Ollama concurrency is locked to `OLLAMA_NUM_PARALLEL=1` to guarantee the 8.0 GB RAM budget is never exceeded. Rate limiting is applied at the Fastify gateway. |
+| **Network Eavesdropping** | Medium | Internal TLS terminates on Caddy with automated certificates and secure proxying. Endpoints are isolated on the local home network. |
+| **Resource Exhaustion** | Medium | Ollama concurrency is locked to `OLLAMA_NUM_PARALLEL=1` to guarantee the 8.0 GB RAM budget is never exceeded. |
 
 ---
 
@@ -85,24 +85,21 @@ Action MATCHES sensitive entity: `lock.front_door`
 
 ---
 
-## 5. Audit Logging Schema
+## 5. Structured Audit Logging
 
-All interactions are recorded in SQLite (`/app/data/neptune.sqlite`) under the `audit_logs` table:
+All backend operations are emitted as structured JSON objects to standard output via the Fastify logging engine. Each log entry captures the timestamp, client connection details, parsed intent, executed tool parameters, and response status:
 
-```sql
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    client_ip TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    input_type TEXT CHECK(input_type IN ('voice', 'text')),
-    transcript TEXT NOT NULL,
-    matched_intent TEXT,
-    tool_called TEXT,
-    tool_arguments TEXT,
-    is_consequential INTEGER DEFAULT 0,
-    confirmation_status TEXT CHECK(confirmation_status IN ('none', 'approved', 'rejected', 'timeout')),
-    execution_result TEXT,
-    error_message TEXT
-);
+```json
+{
+  "level": 30,
+  "time": 1794512809038,
+  "pid": 1,
+  "hostname": "neptune-backend",
+  "req": { "method": "POST", "url": "/api/command" },
+  "intent": "light_control",
+  "entity_id": "light.living_room",
+  "status": "success"
+}
 ```
+
+This structured logging ensures full operational auditability while maintaining high throughput and zero disk I/O bottlenecks on virtualized flash storage. An append-only SQLite audit storage backend is planned for future multi-user compliance requirements.
