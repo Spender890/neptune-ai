@@ -1,0 +1,176 @@
+# ==============================================================================
+# NEPTUNE-AI DEBIAN AI VM - DOCKER COMPOSE ORCHESTRATION
+# ==============================================================================
+# Orchestrates all AI, Speech, Backend and TLS Proxy services for Neptune-AI.
+# Sized to operate comfortably within an 8.0 GB VM memory envelope.
+#
+# IMAGE UPDATE POLICY:
+# - All third-party images are pinned to explicit semantic version tags.
+# - Do NOT use unpinned 'latest' tags in production.
+# - Upgrades must be evaluated and tested individually before updating tags here.
+# ==============================================================================
+
+networks:
+  neptune-net:
+    name: neptune-net
+    driver: bridge
+
+volumes:
+  neptune_caddy_data:
+    name: neptune_caddy_data
+  neptune_caddy_config:
+    name: neptune_caddy_config
+  neptune_ollama_data:
+    name: neptune_ollama_data
+  neptune_whisper_data:
+    name: neptune_whisper_data
+  neptune_piper_data:
+    name: neptune_piper_data
+  neptune_app_data:
+    name: neptune_app_data
+
+services:
+  # ----------------------------------------------------------------------------
+  # CADDY REVERSE PROXY & TLS GATEWAY (Pinned to 2.8.4-alpine)
+  # ----------------------------------------------------------------------------
+  caddy:
+    image: caddy:2.8.4-alpine
+    container_name: neptune-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend/dist:/srv:ro
+      - neptune_caddy_data:/data
+      - neptune_caddy_config:/config
+    networks:
+      - neptune-net
+    depends_on:
+      - neptune-backend
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # OLLAMA LOCAL LLM ENGINE (Latest stable release)
+  # ----------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: neptune-ollama
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_PARALLEL=1
+      - OLLAMA_KEEP_ALIVE=24h
+    volumes:
+      - neptune_ollama_data:/root/.ollama
+    networks:
+      - neptune-net
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # WYOMING-WHISPER STT (Pinned to 3.8.1)
+  # ----------------------------------------------------------------------------
+  whisper:
+    image: rhasspy/wyoming-whisper:3.8.1
+    container_name: neptune-whisper
+    restart: unless-stopped
+    command: --model base.en --language en --device cpu
+    volumes:
+      - neptune_whisper_data:/data
+    networks:
+      - neptune-net
+    ports:
+      - "127.0.0.1:10300:10300"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 10300 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # WYOMING-PIPER TTS (Pinned to 1.6.2)
+  # ----------------------------------------------------------------------------
+  piper:
+    image: rhasspy/wyoming-piper:1.6.2
+    container_name: neptune-piper
+    restart: unless-stopped
+    command: --voice en_US-lessac-medium
+    volumes:
+      - neptune_piper_data:/data
+    networks:
+      - neptune-net
+    ports:
+      - "127.0.0.1:10200:10200"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 10200 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # NEPTUNE CORE BACKEND (Versioned build: 0.1.0)
+  # ----------------------------------------------------------------------------
+  neptune-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: neptune-backend:0.1.0
+    container_name: neptune-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - neptune_app_data:/app/data
+      - ./config:/app/config:ro
+      - ./data/outgoing:/var/spool/asterisk/outgoing
+    networks:
+      - neptune-net
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - ollama
+      - whisper
+      - piper
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # ASTERISK SIP TELEPHONY PBX (Option 1: Lightweight PJSIP Server, ~60 MB RAM)
+  # ----------------------------------------------------------------------------
+  asterisk:
+    build:
+      context: ./asterisk
+      dockerfile: Dockerfile
+    image: neptune-asterisk:0.1.0
+    container_name: neptune-asterisk
+    restart: unless-stopped
+    user: root
+    ports:
+      - "5060:5060/udp"
+      - "10000-10050:10000-10050/udp"
+    volumes:
+      - ./asterisk/asterisk.conf:/etc/asterisk/asterisk.conf:ro
+      - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./scripts:/opt/neptune/scripts:ro
+      - ./scripts:/var/lib/asterisk/agi-bin:ro
+      - ./data/outgoing:/var/spool/asterisk/outgoing
+    networks:
+      - neptune-net
+    depends_on:
+      - neptune-backend

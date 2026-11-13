@@ -1,0 +1,23 @@
+[
+  {
+    "id": "primary",
+    "name": "Alex",
+    "extension": "1001",
+    "role": "Mobile Softphone (Linphone)",
+    "aliases": ["alex", "me", "my phone", "mobile", "cell", "1001"]
+  },
+  {
+    "id": "desk",
+    "name": "Desk",
+    "extension": "1002",
+    "role": "Deskphone / Tablet (Living Room)",
+    "aliases": ["desk", "office", "tablet", "family", "deskphone", "living room desk", "1002"]
+  },
+  {
+    "id": "neptune",
+    "name": "Neptune AI",
+    "extension": "7000",
+    "role": "Voice Assistant Operator",
+    "aliases": ["neptune", "assistant", "operator", "ai", "7000"]
+  }
+]
