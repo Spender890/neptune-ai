@@ -24,6 +24,13 @@ done
 PROJECT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")/.." >/dev/null 2>&1 && pwd)"
 cd "$PROJECT_DIR"
 
+# Auto-detect whether sudo is needed to talk to Docker socket
+if docker info >/dev/null 2>&1; then
+  DOCKER_CMD="docker"
+else
+  DOCKER_CMD="sudo docker"
+fi
+
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -42,14 +49,14 @@ cmd_start() {
   echo -e "${BOLD}${CYAN}================================================================${NC}\n"
 
   # Ensure Docker is running
-  if ! docker info >/dev/null 2>&1; then
+  if ! $DOCKER_CMD info >/dev/null 2>&1; then
     log_warn "Docker service is not running. Attempting to start systemd docker..."
     sudo systemctl start docker || true
     sleep 2
   fi
 
   log_info "Launching Docker containers (Caddy, Backend, Asterisk, Ollama, Whisper, Piper)..."
-  docker compose up -d
+  $DOCKER_CMD compose up -d
 
   log_info "Waiting for core services to become ready..."
   sleep 4
@@ -72,7 +79,7 @@ cmd_warmup() {
     fi
   fi
 
-  if docker exec neptune-ollama ollama run "$MODEL_NAME" "Ready" >/dev/null 2>&1; then
+  if $DOCKER_CMD exec neptune-ollama ollama run "$MODEL_NAME" "Ready" >/dev/null 2>&1; then
     log_ok "AI model '$MODEL_NAME' is active in RAM."
   else
     log_warn "Could not preload '$MODEL_NAME'; will load dynamically upon first query."
@@ -81,24 +88,24 @@ cmd_warmup() {
 
 cmd_stop() {
   echo -e "\n${BOLD}${YELLOW}Stopping Neptune-AI services...${NC}"
-  docker compose stop
+  $DOCKER_CMD compose stop
   log_ok "All Neptune-AI services have been stopped."
 }
 
 cmd_restart() {
   echo -e "\n${BOLD}${CYAN}Restarting Neptune-AI services...${NC}"
-  docker compose restart
+  $DOCKER_CMD compose restart
   cmd_warmup
   cmd_status
 }
 
 cmd_status() {
   echo -e "\n${BOLD}${CYAN}--- Neptune-AI Container Status ---${NC}"
-  docker compose ps
+  $DOCKER_CMD compose ps
 
   echo -e "\n${BOLD}${CYAN}--- Asterisk Telephony Status ---${NC}"
-  if docker ps | grep -q "neptune-asterisk"; then
-    docker exec neptune-asterisk asterisk -rx "pjsip show endpoints" 2>/dev/null || echo "Asterisk starting up..."
+  if $DOCKER_CMD ps | grep -q "neptune-asterisk"; then
+    $DOCKER_CMD exec neptune-asterisk asterisk -rx "pjsip show endpoints" 2>/dev/null || echo "Asterisk starting up..."
   else
     echo "Asterisk container is not running."
   fi
