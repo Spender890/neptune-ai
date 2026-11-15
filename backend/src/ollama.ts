@@ -1,27 +1,38 @@
-import * as http from 'http';
+import { performHttpRequest } from './httpClient';
+
+export interface LLMToolCall {
+  function: {
+    name: string;
+    arguments: Record<string, unknown>;
+  };
+}
 
 export interface LLMResponse {
   type: 'tool' | 'conversational';
-  tool_calls?: Array<{
-    function: {
-      name: string;
-      arguments: Record<string, any>;
-    };
-  }>;
+  tool_calls?: LLMToolCall[];
   content?: string;
   latency_ms: number;
 }
 
+/**
+ * Client for Ollama's /api/chat endpoint with structured tool-calling fallback.
+ */
 export class OllamaAgent {
   private baseUrl: string;
   private model: string;
+  private temperature: number;
+  private contextWindow: number;
 
-  constructor(baseUrl: string, model: string = 'qwen2.5:1.5b') {
+  constructor(baseUrl: string, model: string = 'qwen2.5:3b') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
+    const envTemp = parseFloat(process.env.LLM_TEMPERATURE || '0.2');
+    this.temperature = Number.isFinite(envTemp) ? envTemp : 0.2;
+    const envCtx = parseInt(process.env.LLM_CONTEXT_WINDOW || '4096', 10);
+    this.contextWindow = Number.isFinite(envCtx) && envCtx > 0 ? envCtx : 4096;
   }
 
-  public async evaluate(prompt: string, toolSchemas: any[] = []): Promise<LLMResponse> {
+  public async evaluate(prompt: string, toolSchemas: unknown[] = []): Promise<LLMResponse> {
     const startTime = Date.now();
     const payload = JSON.stringify({
       model: this.model,
@@ -37,90 +48,57 @@ export class OllamaAgent {
       keep_alive: '24h',
       options: {
         num_predict: 120,
-        temperature: 0.2,
+        num_ctx: this.contextWindow,
+        temperature: this.temperature,
       },
     });
 
-    return new Promise((resolve) => {
-      try {
-        const urlObj = new URL(`${this.baseUrl}/api/chat`);
-        const options: http.RequestOptions = {
-          hostname: urlObj.hostname,
-          port: urlObj.port || 11434,
-          path: urlObj.pathname,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
-          },
-          timeout: 20000,
-        };
-
-        const req = http.request(options, (res) => {
-          let body = '';
-          res.on('data', (chunk) => (body += chunk));
-          res.on('end', () => {
-            const latency = Date.now() - startTime;
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-              try {
-                const parsed = JSON.parse(body);
-                const toolCalls = parsed?.message?.tool_calls;
-                if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
-                  return resolve({
-                    type: 'tool',
-                    tool_calls: toolCalls,
-                    latency_ms: latency,
-                  });
-                } else {
-                  return resolve({
-                    type: 'conversational',
-                    content: parsed?.message?.content || 'I processed your request.',
-                    latency_ms: latency,
-                  });
-                }
-              } catch {
-                return resolve({
-                  type: 'conversational',
-                  content: 'Error parsing model response.',
-                  latency_ms: latency,
-                });
-              }
-            } else {
-              return resolve({
-                type: 'conversational',
-                content: `AI Engine returned status code ${res.statusCode}: ${body}`,
-                latency_ms: latency,
-              });
-            }
-          });
-        });
-
-        req.on('error', (err) => {
-          resolve({
-            type: 'conversational',
-            content: `AI Engine connection error: ${err.message}`,
-            latency_ms: Date.now() - startTime,
-          });
-        });
-
-        req.on('timeout', () => {
-          req.destroy();
-          resolve({
-            type: 'conversational',
-            content: 'AI Engine response timed out.',
-            latency_ms: Date.now() - startTime,
-          });
-        });
-
-        req.write(payload);
-        req.end();
-      } catch (err: any) {
-        resolve({
-          type: 'conversational',
-          content: `AI request failed: ${err.message}`,
-          latency_ms: Date.now() - startTime,
-        });
-      }
+    const res = await performHttpRequest(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      timeoutMs: 20000,
     });
+
+    const latency = Date.now() - startTime;
+
+    if (res.error) {
+      return {
+        type: 'conversational',
+        content: res.timedOut ? 'AI Engine response timed out.' : `AI Engine connection error: ${res.error}`,
+        latency_ms: latency,
+      };
+    }
+
+    if (!res.ok) {
+      return {
+        type: 'conversational',
+        content: `AI Engine returned status code ${res.statusCode}: ${res.body}`,
+        latency_ms: latency,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(res.body);
+      const toolCalls = parsed?.message?.tool_calls;
+      if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+        return {
+          type: 'tool',
+          tool_calls: toolCalls,
+          latency_ms: latency,
+        };
+      }
+      return {
+        type: 'conversational',
+        content: parsed?.message?.content || 'I processed your request.',
+        latency_ms: latency,
+      };
+    } catch {
+      return {
+        type: 'conversational',
+        content: 'Error parsing model response.',
+        latency_ms: latency,
+      };
+    }
   }
 }

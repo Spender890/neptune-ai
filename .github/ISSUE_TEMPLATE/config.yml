@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions (Questions, Hardware Setups & Ideas)
+    url: https://github.com/Spender890/neptune-ai/discussions
+    about: Ask deployment questions, share Proxmox/Debian hardware sizing, or propose architecture ideas before opening an issue.
+  - name: Security Vulnerability Disclosure
+    url: https://github.com/Spender890/neptune-ai/security/advisories
+    about: Report security vulnerabilities privately using the guidance in SECURITY.md (do NOT file public bug reports for secrets or exploits).

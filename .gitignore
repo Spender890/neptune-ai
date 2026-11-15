@@ -8,6 +8,7 @@ package-lock.json.bak
 
 # Production Build Outputs
 backend/dist/
+backend/dist-test/
 *.tsbuildinfo
 
 # Environment & Credentials (NEVER commit secrets or live env files)

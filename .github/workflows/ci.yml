@@ -1,0 +1,80 @@
+name: Neptune-AI CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend TypeScript Build, Typecheck & Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20.18.1 (matches container runtime)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.18.1'
+
+      - name: Install backend dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck / Lint (tsc --noEmit)
+        run: npm run lint
+
+      - name: Build TypeScript output
+        run: npm run build
+
+      - name: Run compiled Node unit & mock integration tests
+        run: npm test
+
+      - name: Run npm dependency security audit (high/critical)
+        run: npm audit --audit-level=high
+
+  python-and-shell:
+    name: Python Voice Pipeline Tests & Shell Syntax Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Byte-compile Python scripts and tests
+        run: python3 -m py_compile scripts/asterisk-voice-agent.py scripts/benchmark-voice-phase3.py tests/test_neptune_python.py
+
+      - name: Run Python unit and security invariant tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Validate shell scripts syntax
+        run: bash -n scripts/*.sh
+
+  docker-build:
+    name: Docker Compose & Image Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Docker Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config -q
+
+      - name: Build neptune-backend Docker image
+        run: docker build -t neptune-backend:ci ./backend
+
+      - name: Build neptune-asterisk Docker image
+        run: docker build -t neptune-asterisk:ci ./asterisk

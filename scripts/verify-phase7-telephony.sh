@@ -45,10 +45,10 @@ echo ""
 echo "4. [TEST-SIP-03] Testing Dialplan Routing to Neptune-AI Operator (Ext 7000)..."
 DIALPLAN=$(sudo docker exec neptune-asterisk asterisk -rx "dialplan show 7000@internal" || true)
 echo "${DIALPLAN}"
-if echo "${DIALPLAN}" | grep -q "EAGI"; then
-    echo "   [PASS] Dialplan 7000 correctly routes to Neptune Voice Agent EAGI."
+if echo "${DIALPLAN}" | grep -qE "E?AGI"; then
+    echo "   [PASS] Dialplan 7000 correctly routes to Neptune Voice Agent AGI."
 else
-    echo "   [FAIL] Dialplan routing for 7000 is missing EAGI directive."
+    echo "   [FAIL] Dialplan routing for 7000 is missing AGI directive."
     exit 1
 fi
 
@@ -58,5 +58,5 @@ echo "PHASE 7 VALIDATION SUMMARY:"
 echo "   - SIP PBX Server:       Asterisk 20+ running in Docker (~65 MB RAM)"
 echo "   - SIP Port:             UDP 5060 & RTP 10000-10050"
 echo "   - Registered Endpoints: Ext 1001 (Mobile), 1002 (Tablet/Desk), 7000 (Neptune)"
-echo "   - Voice AI Bridge:      EAGI Bidirectional Linear PCM Bridge"
+echo "   - Voice AI Bridge:      Asterisk AGI Bidirectional Voice Bridge"
 echo "======================================================================"

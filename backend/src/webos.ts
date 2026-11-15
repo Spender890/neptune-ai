@@ -1,5 +1,5 @@
 import { HomeAssistantClient } from './homeassistant';
-import { JellyfinClient, JellyfinSession } from './jellyfin';
+import { JellyfinClient, type JellyfinSession } from './jellyfin';
 
 export interface TVActionResult {
   success: boolean;
@@ -18,7 +18,7 @@ export interface TVPlaybackState {
   isMuted: boolean;
   soundOutput: string;
   speech: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export class LGWebOSManager {
@@ -207,12 +207,14 @@ export class LGWebOSManager {
       }
 
       const attrs = haState.attributes || {};
-      const source = attrs.source || 'Live TV';
-      const volumeLevel = attrs.volume_level !== undefined ? Math.round(attrs.volume_level * 100) : 30;
+      const source = typeof attrs.source === 'string' && attrs.source ? attrs.source : 'Live TV';
+      const rawVol = typeof attrs.volume_level === 'number' ? attrs.volume_level : undefined;
+      const volumeLevel = rawVol !== undefined ? Math.round(rawVol * 100) : 30;
       const isMuted = Boolean(attrs.is_volume_muted);
-      const soundOutput = attrs.sound_output || 'tv_speaker';
-      let title = attrs.media_title || '';
-      let seriesTitle = attrs.media_series_title || '';
+      const soundOutput =
+        typeof attrs.sound_output === 'string' && attrs.sound_output ? attrs.sound_output : 'tv_speaker';
+      let title = typeof attrs.media_title === 'string' ? attrs.media_title : '';
+      let seriesTitle = typeof attrs.media_series_title === 'string' ? attrs.media_series_title : '';
 
       // If media_title is empty and source is Jellyfin, check Jellyfin server sessions directly
       if (!title && source.toLowerCase().includes('jellyfin')) {
@@ -275,14 +277,15 @@ export class LGWebOSManager {
         speech,
         details: attrs,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       return {
         success: false,
         power: 'off',
         volumePercent: 0,
         isMuted: false,
         soundOutput: 'unknown',
-        speech: `Unable to read TV status: ${err.message}`,
+        speech: `Unable to read TV status: ${message}`,
       };
     }
   }

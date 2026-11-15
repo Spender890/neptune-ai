@@ -1,19 +1,43 @@
-import { ReminderStore, Reminder } from './reminders';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ReminderStore, type Reminder } from './reminders';
 import { LGWebOSManager } from './webos';
 import { HomeAssistantClient } from './homeassistant';
 import { resolveContact } from './contacts';
 
+const SAFE_EXTENSION_RE = /^[0-9]{3,6}$/;
+
+function sanitizeCallField(value: string): string {
+  return value.replace(/[\r\n\0]/g, ' ').replace(/"/g, "'").trim();
+}
+
+/**
+ * Background scheduler polling ReminderStore and dispatching due reminders
+ * across LG webOS TV toasts, whole-house TTS speakers, Asterisk SIP calls, and Web callbacks.
+ */
 export class AgendaDaemon {
   private store: ReminderStore;
   private webOS: LGWebOSManager;
   private haClient: HomeAssistantClient;
+  private speakerEntityId: string;
+  private spoolDir: string;
   private timer: NodeJS.Timeout | null = null;
+  private isTicking = false;
   private onTriggerCallback?: (reminder: Reminder) => void;
 
-  constructor(store: ReminderStore, webOS: LGWebOSManager, haClient: HomeAssistantClient) {
+  constructor(
+    store: ReminderStore,
+    webOS: LGWebOSManager,
+    haClient: HomeAssistantClient,
+    speakerEntityId?: string,
+    spoolDir?: string
+  ) {
     this.store = store;
     this.webOS = webOS;
     this.haClient = haClient;
+    this.speakerEntityId =
+      speakerEntityId || process.env.SPEAKER_ENTITY_ID || 'media_player.living_room_vlc_telnet';
+    this.spoolDir = spoolDir || process.env.ASTERISK_SPOOL_DIR || '/var/spool/asterisk/outgoing';
   }
 
   public setTriggerCallback(cb: (reminder: Reminder) => void): void {
@@ -22,7 +46,9 @@ export class AgendaDaemon {
 
   public start(pollIntervalMs: number = 3000): void {
     if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => this.tick(), pollIntervalMs);
+    this.timer = setInterval(() => {
+      void this.tick();
+    }, pollIntervalMs);
   }
 
   public stop(): void {
@@ -33,22 +59,33 @@ export class AgendaDaemon {
   }
 
   public async tick(): Promise<void> {
-    const now = Date.now();
-    const active = this.store.listActive();
+    if (this.isTicking) {
+      return;
+    }
+    this.isTicking = true;
+    try {
+      const now = Date.now();
+      const active = this.store.listActive();
 
-    for (const rem of active) {
-      if (now >= rem.due_at) {
-        // Mark completed immediately so 3-second tick loop never double-dispatches
-        this.store.markCompleted(rem.id);
-        console.log(`[AgendaDaemon] TRIGGERING REMINDER: "${rem.title}" (Channels: ${rem.channels.join(', ')})`);
-        await this.dispatch(rem);
+      for (const rem of active) {
+        if (now >= rem.due_at) {
+          // Mark completed immediately so overlapping or subsequent ticks never double-dispatch
+          this.store.markCompleted(rem.id);
+          console.log(
+            `[AgendaDaemon] TRIGGERING REMINDER: "${rem.title}" (Channels: ${rem.channels.join(', ')})`
+          );
+          await this.dispatch(rem);
+        }
       }
+    } finally {
+      this.isTicking = false;
     }
   }
 
   private async dispatch(rem: Reminder): Promise<void> {
-    const recipient = rem.target_person || process.env.PRIMARY_USER_NAME || 'Primary';
-    const alertMessage = `Reminder: ${rem.title}`;
+    const recipient = sanitizeCallField(rem.target_person || process.env.PRIMARY_USER_NAME || 'Primary');
+    const cleanTitle = sanitizeCallField(rem.title);
+    const alertMessage = `Reminder: ${cleanTitle}`;
 
     // 1. Dispatch to LG TV if enabled (Toast notification on screen)
     if (rem.channels.includes('tv') || rem.channels.includes('all')) {
@@ -63,44 +100,51 @@ export class AgendaDaemon {
     if (rem.channels.includes('speaker') || rem.channels.includes('aux') || rem.channels.includes('all')) {
       try {
         await this.haClient.callService('tts', 'speak', 'tts.google_translate_en_com', {
-          media_player_entity_id: 'media_player.living_room_vlc_telnet',
-          message: `Attention ${recipient}, here is your reminder: ${rem.title}.`,
+          media_player_entity_id: this.speakerEntityId,
+          message: `Attention ${recipient}, here is your reminder: ${cleanTitle}.`,
         });
       } catch (err) {
         console.error('Failed to dispatch reminder to whole-house speakers:', err);
       }
     }
 
-    // 3. Proactive Telephony Call: Call User's Phone to announce the reminder!
+    // 3. Proactive Telephony Call: Call User's Phone to announce the reminder
     if (rem.channels.includes('phone') || rem.channels.includes('call') || rem.channels.includes('all')) {
       try {
-        const spoolDir = process.env.ASTERISK_SPOOL_DIR || '/var/spool/asterisk/outgoing';
-        const fs = await import('fs');
-        if (fs.existsSync(spoolDir)) {
-          // Resolve target extension (Sultan -> 1001, Desk -> 1002)
+        if (fs.existsSync(this.spoolDir)) {
           const contact = resolveContact(recipient);
-          const targetExt = contact ? contact.extension : '1001';
+          const targetExt = contact && SAFE_EXTENSION_RE.test(contact.extension) ? contact.extension : '1001';
+          const safeRecipientName = sanitizeCallField(contact ? contact.name : recipient);
 
           // MaxRetries: 0 ensures Asterisk places exactly 1 call and never retries
-          const callFileContent = [
-            `Channel: PJSIP/${targetExt}`,
-            `CallerID: "Neptune Reminder" <7000>`,
-            `MaxRetries: 0`,
-            `WaitTime: 30`,
-            `Context: internal`,
-            `Extension: 7000`,
-            `Priority: 1`,
-            `Set: REMINDER_MSG=${rem.title.replace(/"/g, "'")}`,
-            `Set: OUTBOUND_TO=${contact ? contact.name : recipient}`,
-          ].join('\n') + '\n';
+          const callFileContent =
+            [
+              `Channel: PJSIP/${targetExt}`,
+              `CallerID: "Neptune Reminder" <7000>`,
+              `MaxRetries: 0`,
+              `WaitTime: 30`,
+              `Context: internal`,
+              `Extension: 7000`,
+              `Priority: 1`,
+              `Set: REMINDER_MSG=${cleanTitle}`,
+              `Set: OUTBOUND_TO=${safeRecipientName}`,
+            ].join('\n') + '\n';
 
-          const tempCallFile = `${spoolDir}/.tmp_${rem.id}.call`;
+          const safeRemId = rem.id.replace(/[^a-zA-Z0-9_-]/g, '');
+          const tempCallFile = path.join(this.spoolDir, `.tmp_${safeRemId}.call`);
+          const finalCallFile = path.join(this.spoolDir, `rem_${safeRemId}.call`);
           fs.writeFileSync(tempCallFile, callFileContent, 'utf-8');
-          fs.chmodSync(tempCallFile, 0o666);
-          fs.renameSync(tempCallFile, `${spoolDir}/rem_${rem.id}.call`);
-          console.log(`[AgendaDaemon] Dispatched outbound call file to Asterisk for reminder: "${rem.title}" to Ext ${targetExt}`);
+          try {
+            fs.chmodSync(tempCallFile, 0o666);
+          } catch {
+            // chmod may be a no-op on non-POSIX filesystems
+          }
+          fs.renameSync(tempCallFile, finalCallFile);
+          console.log(
+            `[AgendaDaemon] Dispatched outbound call file to Asterisk for reminder: "${cleanTitle}" to Ext ${targetExt}`
+          );
         } else {
-          console.warn(`[AgendaDaemon] Asterisk spool directory not mounted at ${spoolDir}`);
+          console.warn(`[AgendaDaemon] Asterisk spool directory not mounted at ${this.spoolDir}`);
         }
       } catch (err) {
         console.error('Telephony dispatch error:', err);

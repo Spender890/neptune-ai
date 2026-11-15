@@ -66,7 +66,7 @@ echo ""
 echo -e "${CYAN}6. Testing Universal Reminders (Universal Store & Channel Sync)...${NC}"
 REM_RES=$(curl -s -X POST "${BACKEND_URL}/api/command" \
   -H "Content-Type: application/json" \
-  -d '{"text": "remind me to check the oven in 1 minute", "caller_id": "1001", "caller_name": "Sultan"}')
+  -d '{"text": "remind me to check the oven in 1 minute", "caller_id": "1001", "caller_name": "Primary"}')
 echo "Response: ${REM_RES}"
 echo "${REM_RES}" | grep -q "fast-path-reminder" && echo -e "   [${GREEN}PASS${NC}] Reminder created with caller metadata."
 

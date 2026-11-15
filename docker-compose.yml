@@ -85,7 +85,7 @@ services:
     image: rhasspy/wyoming-whisper:3.8.1
     container_name: neptune-whisper
     restart: unless-stopped
-    command: --model base.en --language en --device cpu
+    command: --model ${WHISPER_MODEL:-base.en} --language ${WHISPER_LANGUAGE:-en} --device cpu
     volumes:
       - neptune_whisper_data:/data
     networks:
@@ -105,7 +105,7 @@ services:
     image: rhasspy/wyoming-piper:1.6.2
     container_name: neptune-piper
     restart: unless-stopped
-    command: --voice en_US-lessac-medium
+    command: --voice ${PIPER_VOICE:-en_US-lessac-medium}
     volumes:
       - neptune_piper_data:/data
     networks:
@@ -158,7 +158,11 @@ services:
     image: neptune-asterisk:0.1.0
     container_name: neptune-asterisk
     restart: unless-stopped
+    # Starts as root to match host bind-mount spool permissions, then drops privileges via asterisk.conf (runuser=asterisk)
     user: root
+    environment:
+      - PRIMARY_USER_NAME=${PRIMARY_USER_NAME:-Primary}
+      - NEPTUNE_API_KEY=${NEPTUNE_API_KEY:-}
     ports:
       - "5060:5060/udp"
       - "10000-10050:10000-10050/udp"
@@ -174,3 +178,8 @@ services:
       - neptune-net
     depends_on:
       - neptune-backend
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core show version' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

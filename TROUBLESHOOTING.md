@@ -62,23 +62,22 @@ This guide provides targeted remediation procedures for common failure states ac
 
 ---
 
-### Symptom: Microphone Button Throws `NotAllowedError` or Permission Denied on Mobile
-* **Root Cause:** Accessing over plain HTTP or the self-signed TLS root certificate is untrusted.
-* **Remediation:**
-  1. Ensure you are accessing via `https://neptune.home.arpa`.
-  2. Follow Section Part D of [INSTALLATION.md](file:///INSTALLATION.md) to install `neptune-root.crt` on your mobile device.
-  3. On iOS, verify that full trust is enabled in **Settings $\rightarrow$ General $\rightarrow$ About $\rightarrow$ Certificate Trust Settings**.
+### Symptom: Microphone Button Does Not Transcribe in Browser
+* **Root Cause:**
+  1. In `v0.1.0`, the Push-to-Talk microphone button is a UI stub (live voice pipeline runs over SIP telephony Extension `7000`, while browser `/api/voice/transcribe` Web Audio upload is planned for `v0.2.0`).
+  2. If `NotAllowedError` appears on mobile browsers, verify you are accessing via `https://neptune.home.arpa` (not plain HTTP or direct IP) with Caddy's `neptune-root.crt` trusted per Part D of [INSTALLATION.md](./INSTALLATION.md).
 
 ---
 
-### Symptom: Audio Recording Transcribes as Gibberish or Fails
-* **Root Cause:** Ingestion FFmpeg conversion failed or browser sent an unsupported format.
+### Symptom: SIP Voice Audio Fails to Transcode Inside Asterisk Container
+* **Root Cause:** `sox` or Python `wyoming` module missing, or `/var/spool/asterisk/tmp` permissions issue.
 * **Diagnostics:**
   ```bash
-  sudo docker compose logs -f neptune-backend
+  sudo docker compose logs -f asterisk
+  sudo docker compose exec asterisk sox --version
   ```
 * **Remediation:**
-  * Verify `ffmpeg` is active inside the backend container: `sudo docker compose exec neptune-backend ffmpeg -version`.
+  * Rebuild `neptune-asterisk` from `asterisk/Dockerfile` (`sudo docker compose build asterisk`) and ensure `/var/spool/asterisk/tmp` exists and is writable.
 
 ---
 
@@ -126,7 +125,16 @@ sudo docker compose logs -f neptune-backend
 * **Remediation:**
   1. Confirm VM 100 has booted and obtained an IP on `vmbr0`.
   2. Check if Home Assistant has banned the IP address under `ip_bans.yaml`.
-  3. Verify the `HOMEASSISTANT_TOKEN` in `.env` has not expired or been revoked.
+  3. Verify the `HOMEASSISTANT_TOKEN` in `.env` has not expired or been revoked, and confirm the target entity is listed in `config/allowed_entities.json`.
+
+### Symptom: API Requests Return `401 Unauthorized`
+* **Root Cause:** `NEPTUNE_API_KEY` is configured in `.env`, and the caller omitted or sent an incorrect `X-API-Key` / `Authorization: Bearer` header.
+* **Remediation:**
+  1. Set matching `NEPTUNE_API_KEY` in `neptune-asterisk` environment variables (automatically passed from `.env` in `docker-compose.yml`) or pass `-H "X-API-Key: <your-key>"` for curl/scripts.
+  2. `/api/health` remains accessible without an API key for container healthchecks.
+
+### Symptom: Lock or Garage Door Command Returns `requires_confirmation: true` Without Executing
+* **Root Cause:** Working as designed — `PermissionsGateway` checks `consequential_entities` (`config/allowed_entities.json`) and blocks automatic execution of security-sensitive hardware (`lock.*`, `cover.*`). Interactive `/api/confirm` approval is planned for `v0.2.0`; execute via Home Assistant directly in `v0.1.0`.
 
 ### Symptom: Jellyfin Media Search Returns Empty or Fails
 * **Diagnostics:**

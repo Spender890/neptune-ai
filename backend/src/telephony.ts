@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveContact, Contact } from './contacts';
+import { resolveContact, type Contact, CONTACT_DIRECTORY } from './contacts';
 
 export interface OutboundCallRequest {
   recipientQuery: string;
@@ -16,30 +16,77 @@ export interface OutboundCallResult {
   callFile?: string;
 }
 
+const EMERGENCY_NUMBERS = new Set(['911', '999', '112', '000', '110', '119', '988']);
+const ALLOWED_RAW_EXTENSION_RE = /^(100[1-9]|7000)$/;
+const MAX_SPOKEN_MESSAGE_LENGTH = 300;
+
+function sanitizeCallHeaderField(value: string, maxLen: number): string {
+  return value.replace(/[\r\n\0]/g, ' ').replace(/"/g, "'").trim().slice(0, maxLen);
+}
+
+/**
+ * Formats and safely writes Asterisk `.call` spool files for outbound household intercom messages.
+ */
 export class TelephonyManager {
   private spoolDir: string;
+  private directory: Contact[];
 
-  constructor(spoolDir: string = process.env.ASTERISK_SPOOL_DIR || '/var/spool/asterisk/outgoing') {
+  constructor(
+    spoolDir: string = process.env.ASTERISK_SPOOL_DIR || '/var/spool/asterisk/outgoing',
+    directory: Contact[] = CONTACT_DIRECTORY
+  ) {
     this.spoolDir = spoolDir;
+    this.directory = directory;
   }
 
   /**
-   * Places an outbound automated voice call to a target person or extension,
+   * Places an outbound automated voice call to a whitelisted contact or internal SIP extension,
    * speaking the requested message when answered.
    */
   public async dispatchCallMessage(req: OutboundCallRequest): Promise<OutboundCallResult> {
-    const contact = resolveContact(req.recipientQuery);
-    const targetExt = contact ? contact.extension : req.recipientQuery.replace(/\D/g, '');
+    if (!req || typeof req.recipientQuery !== 'string' || typeof req.message !== 'string') {
+      return {
+        success: false,
+        speech: 'Invalid outbound call request: missing recipient or message.',
+      };
+    }
+
+    const rawDigits = req.recipientQuery.replace(/\D/g, '');
+    if (EMERGENCY_NUMBERS.has(rawDigits)) {
+      return {
+        success: false,
+        speech: 'Dialing emergency numbers is prohibited by Neptune-AI safety policy.',
+      };
+    }
+
+    const contact = resolveContact(req.recipientQuery, this.directory);
+    let targetExt = '';
+
+    if (contact && /^[0-9]{3,6}$/.test(contact.extension) && !EMERGENCY_NUMBERS.has(contact.extension)) {
+      targetExt = contact.extension;
+    } else if (ALLOWED_RAW_EXTENSION_RE.test(req.recipientQuery.trim())) {
+      targetExt = req.recipientQuery.trim();
+    } else if (rawDigits && ALLOWED_RAW_EXTENSION_RE.test(rawDigits)) {
+      targetExt = rawDigits;
+    }
 
     if (!targetExt) {
       return {
         success: false,
-        speech: `I could not find anyone named "${req.recipientQuery}" in your contacts.`,
+        speech: `I could not find an authorized internal contact or extension matching "${sanitizeCallHeaderField(req.recipientQuery, 60)}".`,
       };
     }
 
-    const recipientName = contact ? contact.name : `Extension ${targetExt}`;
-    const sender = req.senderName && req.senderName.trim() ? req.senderName.trim() : 'Neptune';
+    const cleanMsg = sanitizeCallHeaderField(req.message, MAX_SPOKEN_MESSAGE_LENGTH);
+    if (!cleanMsg) {
+      return {
+        success: false,
+        speech: 'Outbound call message cannot be empty.',
+      };
+    }
+
+    const recipientName = sanitizeCallHeaderField(contact ? contact.name : `Extension ${targetExt}`, 60);
+    const sender = sanitizeCallHeaderField(req.senderName || 'Neptune', 60) || 'Neptune';
 
     try {
       if (!fs.existsSync(this.spoolDir)) {
@@ -51,33 +98,37 @@ export class TelephonyManager {
       }
 
       const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      
-      // Clean message for Asterisk channel variable (single-line, escape quotes)
-      const cleanMsg = req.message.replace(/[\r\n]+/g, ' ').replace(/"/g, "'").trim();
 
       // Asterisk Call Spool Configuration
       // MaxRetries: 0 prevents repeat redialing
-      const callFileContent = [
-        `Channel: PJSIP/${targetExt}`,
-        `CallerID: "Neptune (${sender})" <7000>`,
-        `MaxRetries: 0`,
-        `WaitTime: 30`,
-        `Context: internal`,
-        `Extension: 7000`,
-        `Priority: 1`,
-        `Set: OUTBOUND_MSG=${cleanMsg}`,
-        `Set: OUTBOUND_TO=${recipientName}`,
-        `Set: OUTBOUND_FROM=${sender}`,
-      ].join('\n') + '\n';
+      const callFileContent =
+        [
+          `Channel: PJSIP/${targetExt}`,
+          `CallerID: "Neptune (${sender})" <7000>`,
+          `MaxRetries: 0`,
+          `WaitTime: 30`,
+          `Context: internal`,
+          `Extension: 7000`,
+          `Priority: 1`,
+          `Set: OUTBOUND_MSG=${cleanMsg}`,
+          `Set: OUTBOUND_TO=${recipientName}`,
+          `Set: OUTBOUND_FROM=${sender}`,
+        ].join('\n') + '\n';
 
       const tempFile = path.join(this.spoolDir, `.tmp_${callId}.call`);
       const targetFile = path.join(this.spoolDir, `${callId}.call`);
 
       fs.writeFileSync(tempFile, callFileContent, 'utf-8');
-      fs.chmodSync(tempFile, 0o666);
+      try {
+        fs.chmodSync(tempFile, 0o666);
+      } catch {
+        // chmod may be unsupported on Windows or restricted mounts
+      }
       fs.renameSync(tempFile, targetFile);
 
-      console.log(`[TelephonyManager] Successfully dropped call file ${targetFile} for Ext ${targetExt} (${recipientName})`);
+      console.log(
+        `[TelephonyManager] Successfully dropped call file ${targetFile} for Ext ${targetExt} (${recipientName})`
+      );
 
       return {
         success: true,
@@ -86,11 +137,12 @@ export class TelephonyManager {
         contact,
         callFile: targetFile,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[TelephonyManager] Failed to create call file:', err);
       return {
         success: false,
-        speech: `Failed to place call to ${recipientName}: ${err.message}`,
+        speech: `Failed to place call to ${recipientName}: ${message}`,
         targetExtension: targetExt,
         contact,
       };

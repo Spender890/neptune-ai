@@ -10,8 +10,11 @@ RUN apk add --no-cache \
     curl \
     bash
 
-# Fix directory ownership
-RUN chown -R asterisk:asterisk /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk /var/run/asterisk
+RUN pip3 install --no-cache-dir --break-system-packages wyoming==1.5.4
+
+# Create spool directories and fix ownership
+RUN mkdir -p /var/spool/asterisk/tmp /var/spool/asterisk/outgoing && \
+    chown -R asterisk:asterisk /etc/asterisk /var/lib/asterisk /var/log/asterisk /var/spool/asterisk /var/run/asterisk
 
 EXPOSE 5060/udp 10000-10050/udp
 

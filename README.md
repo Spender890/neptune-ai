@@ -13,6 +13,32 @@ Built entirely to run on on-premise hardware without commercial cloud APIs or pr
 
 ---
 
+> [!NOTE]
+> **30-Second Overview (`v0.1.0`)**
+> - **What it is:** A 100% local, privacy-first home automation, entertainment, reminder, and SIP telephone AI assistant orchestrating Home Assistant, Jellyfin, Ollama (`qwen2.5:3b`), Wyoming Whisper/Piper, and Asterisk 20.
+> - **Why it differs:** Sub-millisecond deterministic `FastPathRouter` handles lights, climate, TV control, timers, locks, and intercom calls *before* touching the CPU-bound LLM — and isolates dangerous lock/cover actions behind `PermissionsGateway` confirmation flags.
+> - **Supported hardware:** Tested architecture targets x86-64 Linux hosts (e.g., Debian 12 VM on Proxmox VE with AVX2 CPU for `faster-whisper` and Ollama); minimum ~8 GB RAM for the AI VM + Home Assistant on your LAN. No GPU required.
+> - **What works vs. planned:** See the [Feature Status Table](#feature-status) below before deploying.
+> - **Get started / Help:** Follow [INSTALLATION.md](./INSTALLATION.md) (Standalone Docker Compose or Proxmox VE), run tests via [CONTRIBUTING.md](./CONTRIBUTING.md), or ask questions in [GitHub Discussions](https://github.com/Spender890/neptune-ai/discussions).
+
+<a id="feature-status"></a>
+### Feature Status
+
+| Subsystem / Feature | Status | Verification & Scope |
+| :--- | :--- | :--- |
+| **Deterministic FastPath Router** (`lights`, `switches`, `climate`, `TV`, `timers`, `locks/covers`) | **Tested** | 7 FastPath unit tests pass (`backend/test/neptune.test.ts`; 17 backend tests total across 8 suites); local CPU microbenchmark verified (`scripts/benchmark-fastpath.ts`) |
+| **Permissions Gateway & Consequential Entity Guard** | **Tested** | Unit-verified strict regex validation, explicit wildcard matching, and `consequential_entities` confirmation gating |
+| **Backend API & Auth Middleware** (`Fastify`) | **Tested** | Route registration, input bounds, and optional `NEPTUNE_API_KEY` verification tested with mock Fastify & HTTP doubles; live container startup awaits Linux CI/Docker run |
+| **Home Assistant, Jellyfin & Ollama HTTP Clients** | **Tested** | Verified against mock `http`/`https` responders and timeout paths; live LAN device execution unverified in offline audit |
+| **Reminders & Agenda Daemon** | **Tested** | Atomic JSON persistence and sanitized Asterisk `.call` file generation tested locally; physical speaker/TV playback requires live LAN stack |
+| **Asterisk PJSIP Dialplan & Python AGI Voice Bridge** | **Tested** | AGI parsing, word-boundary hangup detection, `.call` sanitization, and `StdlibWyomingClient` STT/TTS framing unit-tested; live SIP call audio unverified offline |
+| **LG webOS TV Integration & ARC Audio Routing** | **Experimental** | Wired via HA `webostv` + Jellyfin `/Sessions`; physical TV verification depends on local LG hardware & pairing |
+| **Web Cockpit Static UI** (`frontend/dist/index.html`) | **Experimental** | Text command dispatch and HTML-escaped reminder management implemented; Push-to-Talk mic button is a **Planned** stub (no live Web Audio upload route yet) |
+| **Interactive Web Confirmation Flow** (`/api/confirm`) | **Planned** | Consequential lock/cover actions are blocked (`requires_confirmation: true`); two-step confirmation approval endpoint & modal planned for `v0.2.0` |
+| **Persistent SQLite Audit Logging** | **Planned** | Currently outputs console/structured stdout logs; persistent SQLite audit log planned for `v0.2.0` |
+
+---
+
 ## Table of Contents
 
 1. [Project Overview & Engineering Goals](#project-overview--engineering-goals)
@@ -29,7 +55,7 @@ Built entirely to run on on-premise hardware without commercial cloud APIs or pr
 12. [Configuration Reference](#configuration-reference)
 13. [Measured Performance Benchmarks](#measured-performance-benchmarks)
 14. [Hardware Constraints & Edge Sizing](#hardware-constraints--edge-sizing)
-15. [Future Roadmap & Portfolio Takeaways](#future-roadmap--portfolio-takeaways)
+15. [Documentation, Security & Community Guides](#15-documentation-security--community-guides)
 
 ---
 
@@ -173,44 +199,44 @@ flowchart TD
 
 | Layer | Component | Technology / Version | Deployment Mode | Responsibility |
 | :--- | :--- | :--- | :--- | :--- |
-| **Edge Gateway** | Caddy | v2.8.4 | Docker container | TLS termination, local mDNS routing, Web Audio permission gate |
-| **API Backend** | Fastify | v4.28 / TypeScript 5.4 | Docker container (Node 20 LTS) | Intent routing, subsystem coordination, state management |
-| **Deterministic Router** | FastPath | Custom TypeScript Engine | In-memory backend module | Sub-10ms regex matching for lights, climate, TV, calls, timers |
-| **Neural Reasoning** | Ollama | v0.40.16 / Qwen 2.5 3B | Docker container (`--ipc=host`) | Natural language parsing, conversational reasoning, tool calling |
+| **Edge Gateway** | Caddy | v2.8.4 | Docker container (`neptune-net` bridge) | TLS termination, local mDNS routing, static Web Cockpit hosting |
+| **API Backend** | Fastify | v4.26+ / TypeScript 5.3+ | Docker container (Node 20.18.1 Alpine) | Intent routing, subsystem coordination, API key gate, state management |
+| **Deterministic Router** | FastPath | Custom TypeScript Engine | In-memory backend module | Sub-millisecond regex matching for lights, climate, TV, calls, locks, timers |
+| **Neural Reasoning** | Ollama | v0.4.16 / Qwen 2.5 3B | Docker container (`neptune-net` bridge) | Natural language parsing, conversational reasoning, tool calling |
 | **Speech-to-Text** | Wyoming Whisper | v3.8.1 (faster-whisper `base.en`) | Docker container (TCP 10300) | 16kHz mono audio transcription on CPU with AVX2 |
 | **Text-to-Speech** | Wyoming Piper | v1.6.2 (`lessac-medium` ONNX) | Docker container (TCP 10200) | Low-latency speech synthesis, faster than real-time |
-| **Telephony PBX** | Asterisk | v20 LTS / PJSIP | Docker container (`network_mode: host`) | SIP endpoint registration, RTP streams, dialplan routing |
+| **Telephony PBX** | Asterisk | v20 LTS / PJSIP | Docker container (`neptune-net` bridge + UDP RTP ports) | SIP endpoint registration, RTP streams, dialplan routing |
 | **Telephony Agent** | Python AGI Bridge | Python 3.11 / `asyncio` | AGI script invoked by Asterisk | Caller ID identification, Whisper/Piper streaming, PBX dialogs |
-| **Home Automation** | Home Assistant | HAOS Core (VM 100) | Dedicated Virtual Machine | Entity bus, Zigbee/Z-Wave orchestration, device state store |
-| **Entertainment** | LG webOS TV | webOSTV REST / WebSocket | Local Network (Smart TV) | Display controls, app management, HDMI ARC audio redirection |
-| **Media Server** | Jellyfin | v10.9 LTS | Standalone NAS (WD Sentinel) | Movie/music metadata lookup, media streaming coordination |
+| **Home Automation** | Home Assistant | HAOS Core (or standalone LAN instance) | Dedicated VM / LAN appliance | Entity bus, Zigbee/Z-Wave orchestration, device state store |
+| **Entertainment** | LG webOS TV | webOSTV via Home Assistant | Local Network (Smart TV) | Display controls, app management, HDMI ARC audio redirection |
+| **Media Server** | Jellyfin | v10.9 LTS | Standalone NAS / LAN server | Movie/music metadata lookup, remote playback coordination |
 
 ---
 
 ## 6. Voice Processing Pipeline
 
-Neptune-AI provides an identical conversational experience whether accessed through the web browser or over a telephone call:
+Neptune-AI provides unified intent handling across its Text Web Cockpit API and SIP telephone calls:
 
 ```
 [Audio Input] ──► [16kHz PCM] ──► [Wyoming Whisper] ──► [FastPath / LLM] ──► [Wyoming Piper] ──► [Audio Output]
-(Mic or SIP)      Transcode       (STT: ~1.2s on CPU)    (Decision Engine)    (TTS: ~180ms TTFA)   (Browser or SIP)
+(SIP Call)        sox resample    (STT: ~1.2s on CPU)    (Decision Engine)    (TTS: ~180ms TTFA)   (SIP Playback)
 ```
 
 1. **Audio Capture:**
    - **Asterisk Telephony (Live Speech):** Asterisk records the caller's turn to `/var/spool/asterisk/tmp/user_turn.wav` using silence detection (`Record(...,2,7,k)`), dispatched to Whisper STT.
-   - **Web Cockpit (Visual & Command Hub):** Provides instant text command submission, interactive reminder management, and real-time telemetry, with client-side push-to-talk state toggling.
+   - **Web Cockpit (Text Command Hub & Reminder UI):** Provides instant text command submission, HTML-escaped reminder management, and status inspection. *(Note: the Push-to-Talk microphone button is currently a client-side UI stub; live Web Audio capture to Whisper is planned for `v0.2.0`.)*
 2. **Speech-to-Text (STT):**
-   - Transmitted over Wyoming TCP protocol to Whisper.
+   - `scripts/asterisk-voice-agent.py` resamples recorded `.wav` audio to 16kHz mono PCM via `sox` and transmits it over the Wyoming TCP protocol to Whisper.
    - Faster-whisper executes INT8 quantized CPU inference using `base.en` model with beam size 1 for minimum latency.
 3. **Intent Parsing & Dispatch:**
-   - Text string is evaluated by `FastPath` in under 10ms. If matched, the command is executed immediately and an acknowledgement speech string is returned.
-   - If unmatched, the text and conversational context are forwarded to Ollama (`qwen2.5:3b`) with native tool-calling JSON schemas.
+   - Text string is evaluated by `FastPathRouter.match()` in under 1 millisecond. If matched, permitted commands execute immediately via Home Assistant/Telephony/Reminders unless gated by `consequential_entities`.
+   - If unmatched, the text is forwarded to Ollama (`qwen2.5:3b`) with narrow tool-calling JSON schemas (`ha_set_state`, `ha_set_climate`, `broadcast_announcement`, `telephony_call`, `media_control`).
 4. **Text-to-Speech (TTS):**
    - Generated response text is dispatched to Wyoming Piper over TCP.
    - Piper synthesizes 22050Hz raw PCM audio using the ONNX-optimized `en_US-lessac-medium` voice.
 5. **Playback Transcoding & Delivery:**
-   - **Asterisk Audio:** `ffmpeg` transcodes the 22kHz output into Asterisk-native 8kHz mono ULAW/WAV format, streamed into the active call via AGI `STREAM FILE`.
-   - **Whole-House Speakers:** Transmitted via Home Assistant VLC-Telnet bridge directly to the living room / central amplifier.
+   - **Asterisk Audio:** `sox` transcodes Piper's synthesized output into Asterisk-native 8kHz mono PCM WAV (`-t raw -r 22050 ... -r 8000 -c 1`), streamed into the active call via AGI `STREAM FILE`.
+   - **Whole-House Speakers:** Transmitted via Home Assistant VLC-Telnet / media player TTS bridge (`SPEAKER_ENTITY_ID`) directly to the central amplifier.
 
 ---
 
@@ -429,17 +455,35 @@ Maps extension numbers to individuals, roles, and recognizable voice aliases:
 
 ## 13. Measured Performance Benchmarks
 
-All metrics benchmarked on physical Intel Core i7-10700 CPU running within Docker containers on Debian 12 (no GPU acceleration):
+> **Transparency Notice (Phase 6 Methodology):** The first table reports historical end-to-end metrics recorded during Phase 2–8 deployment on an Intel Core i7-10700 Debian 12 host (`ollama/ollama:0.4.16`, `qwen2.5:3b`, context window `4096`, `temperature: 0.1`); those live container measurements were **not** re-run during this Windows audit. The second section shows a reproducible in-memory FastPath CPU microbenchmark verified directly in this workspace.
 
-| Pipeline Stage | Tested Operation | Measured Latency | Resource Utilization |
+### A. Historical End-to-End Debian 12 Hardware Measurements (i7-10700, CPU-only, Phase 2–8)
+
+| Pipeline Stage | Tested Operation | Historical Latency | Resource Utilization |
 | :--- | :--- | :--- | :--- |
-| **FastPath Router** | Smart home command (*"turn on living room light"*) | **4 ms – 9 ms** | $< 1\%$ CPU, negligible RAM |
-| **FastPath TV Control** | WebOS power / volume / ARC sound routing | **3 ms – 8 ms** | $< 1\%$ CPU, instantaneous |
-| **FastPath Reminders** | Native timer (*"remind me in 10 minutes"*) | **5 ms** | In-memory store, zero CPU spike |
-| **Wyoming Whisper** | 3.5s audio utterance transcription (`base.en`) | **1.20 s – 1.65 s** | 4 CPU cores burst, ~380 MiB RAM |
-| **Wyoming Piper** | Speech synthesis (`en_US-lessac-medium`) | **150 ms – 220 ms (TTFA)** | Real-time factor 0.15 (faster than speech) |
-| **Ollama LLM (Qwen 2.5 3B)** | Unstructured tool calling & reasoning | **3.36 s total** (~9.68 tok/s) | 6 vCPUs (100% burst), 2.69 GiB RAM |
-| **Asterisk SIP Origination**| Spool file creation to PBX ring event | **< 20 ms** | Microsecond disk write |
+| **FastPath + Local HA Turn** | End-to-end HTTP + HA REST turn (*"turn on living room light"*) | **4 ms – 9 ms** | $< 1\%$ CPU, negligible RAM |
+| **FastPath TV Control** | WebOS power / volume / ARC sound routing via HA | **3 ms – 8 ms** | $< 1\%$ CPU, instantaneous |
+| **FastPath Reminders** | Native timer persistence (*"remind me in 10 minutes"*) | **5 ms** | In-memory store + atomic disk write |
+| **Wyoming Whisper (`3.8.1`)** | 3.5s audio utterance (`base.en`, INT8, beam size 1) | **1.20 s – 1.65 s** | 4 CPU cores burst, ~380 MiB RAM |
+| **Wyoming Piper (`1.6.2`)** | Speech synthesis (`en_US-lessac-medium` ONNX) | **150 ms – 220 ms (TTFA)** | Real-time factor 0.15 |
+| **Ollama LLM (`qwen2.5:3b`)** | Unstructured tool calling (`num_ctx=4096`, `temp=0.1`) | **3.36 s total** (~9.68 tok/s) | 6 vCPUs (100% burst), 2.69 GiB RAM |
+| **Asterisk SIP Origination**| `.call` spool file creation | **< 20 ms** | Microsecond disk write |
+
+### B. Reproducible FastPath Microbenchmark (`scripts/benchmark-fastpath.ts`)
+
+Measures **pure `FastPathRouter.match()` regex parsing in isolation** (excludes Fastify HTTP, HA REST, STT/TTS, and LLM latency) across `10,000` iterations (`1,000` warm-up, 10 representative utterances) on an `Intel(R) Core(TM) 7 240H` (`16` logical cores, Windows x64, `Node v26.13.0`):
+
+| Metric | Measured Value |
+| :--- | :--- |
+| **Mean / p50** | `1.05 us` / `0.60 us` |
+| **p95 / p99** | `1.90 us` / `2.80 us` |
+| **Max (single outlier)** | `584.90 us` |
+| **Throughput** | `853,410 match/s` |
+
+Run locally via:
+```bash
+node --import ./backend/test/ts-loader.mjs scripts/benchmark-fastpath.ts
+```
 
 ---
 
@@ -448,14 +492,24 @@ All metrics benchmarked on physical Intel Core i7-10700 CPU running within Docke
 Running an edge-native assistant without discrete GPU acceleration requires deliberate architectural constraints:
 
 ### 1. Memory Sizing & Fixed Commitments
-- Dynamic memory ballooning is strictly **disabled** in Proxmox to prevent kernel paging spikes during concurrent model inference.
-- **VM 100 (HAOS):** Fixed 3.0 GB RAM.
-- **VM 101 (Debian AI):** Fixed 8.0 GB RAM. Ollama + Whisper + Piper + Fastify + Asterisk consume ~4.5 GB under peak load, leaving 3.5 GB for operating system page caches and audio transcoding buffers.
-- **Host Headroom:** 5.0 GB physical RAM reserved for the Proxmox hypervisor and ZFS ARC (capped at 1.0 GB).
+- Dynamic memory ballooning is **disabled** in Proxmox to prevent kernel paging spikes during concurrent model inference.
+- **VM 100 (HAOS):** Fixed 3.0 GB RAM baseline.
+- **VM 101 (Debian AI):** Fixed 8.0 GB RAM baseline. Ollama + Whisper + Piper + Fastify + Asterisk consume ~4.5 GB under peak load, leaving ~3.5 GB for OS page caches and audio transcoding buffers.
+- **Host Headroom:** ~5.0 GB physical RAM reserved for the Proxmox hypervisor and ZFS ARC (recommendation to cap ZFS ARC at 1.0 GB printed by `scripts/host-tuning.sh`).
 
-### 2. Audio Transcoding & RTP Optimization
-- Asterisk runs in `network_mode: host` to eliminate Docker NAT traversal overhead on UDP RTP streams (ports 10000–20000).
-- Python AGI scripts pre-transcode audio directly to Asterisk-compatible WAV format (`pcm_s16le`, 8000 Hz, mono) to eliminate real-time CPU transcoding during playback.
+### 2. Audio Transcoding & RTP Networking
+- `docker-compose.yml` runs Asterisk on the `neptune-net` bridge network mapping SIP (`5060/udp`) and a bounded RTP media range (`10000-10050/udp`). Deployments behind complex multi-subnet LANs can optionally switch Asterisk to `network_mode: host` if one-way RTP audio occurs.
+- Python AGI scripts transcode speech directly via `sox` to Asterisk-compatible WAV format (`8000 Hz`, mono, 16-bit) to minimize real-time transcoding overhead during playback.
+
+---
+
+## 15. Documentation, Security & Community Guides
+
+- **Installation & Upgrade Guide:** [INSTALLATION.md](./INSTALLATION.md) (Standalone Docker Compose & Proxmox VE)
+- **Contributing & Dev Setup:** [CONTRIBUTING.md](./CONTRIBUTING.md) | [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- **Architecture & Troubleshooting:** [ARCHITECTURE.md](./ARCHITECTURE.md) | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | [OPERATIONS.md](./OPERATIONS.md)
+- **Security Policy & Audit Reports:** [SECURITY.md](./SECURITY.md) | [SECURITY_REVIEW.md](./SECURITY_REVIEW.md) | [OPEN_SOURCE_READINESS_AUDIT.md](./OPEN_SOURCE_READINESS_AUDIT.md)
+- **Quality, Debt & Release Planning:** [TEST_COVERAGE_REPORT.md](./TEST_COVERAGE_REPORT.md) | [TECHNICAL_DEBT.md](./TECHNICAL_DEBT.md) | [CHANGELOG.md](./CHANGELOG.md) | [RELEASE_CHECKLIST_v0.1.0.md](./RELEASE_CHECKLIST_v0.1.0.md)
 
 ---
 

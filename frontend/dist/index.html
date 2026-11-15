@@ -373,7 +373,7 @@
     <div class="card">
       <div class="card-title">
         <span>LG webOS TV &amp; Media</span>
-        <span class="latency-tag" id="tv-power-tag">QNED806QA</span>
+        <span class="latency-tag" id="tv-power-tag">webOS TV</span>
       </div>
 
       <!-- Live TV Playback & Output Status -->
@@ -532,11 +532,11 @@
       </div>
       <div class="status-row">
         <span class="status-label">LG webOS TV:</span>
-        <span class="status-val">QNED806QA &bull; ARC Sound Routing</span>
+        <span class="status-val">Smart TV &bull; ARC Sound Routing</span>
       </div>
       <div class="status-row">
         <span class="status-label">Entertainment Server:</span>
-        <span class="status-val">WD Sentinel Jellyfin (jellyfin.local:8096)</span>
+        <span class="status-val">Jellyfin Media Server</span>
       </div>
     </div>
   </div>
@@ -559,14 +559,49 @@
     const btnRouteSpeakers = document.getElementById('btn-route-speakers');
     const btnRouteTv = document.getElementById('btn-route-tv');
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    let apiKeyPromptShown = false;
+
+    async function apiFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const storedKey = window.localStorage ? window.localStorage.getItem('neptune_api_key') : '';
+      if (storedKey) {
+        headers.set('X-API-Key', storedKey);
+      }
+
+      let res = await fetch(url, { ...options, headers });
+      if (res.status === 401 && !apiKeyPromptShown) {
+        apiKeyPromptShown = true;
+        const entered = window.prompt('Neptune API Key required (set in .env NEPTUNE_API_KEY):');
+        if (entered && entered.trim()) {
+          if (window.localStorage) {
+            window.localStorage.setItem('neptune_api_key', entered.trim());
+          }
+          headers.set('X-API-Key', entered.trim());
+          res = await fetch(url, { ...options, headers });
+        }
+      }
+      return res;
+    }
+
     async function sendCommand(text) {
       if (!text) return;
+      const resBox = document.getElementById('res-box');
+      if (resBox) resBox.style.borderLeftColor = 'var(--accent)';
       resText.textContent = "Processing...";
       resLatency.textContent = "...";
       const start = performance.now();
 
       try {
-        const res = await fetch('/api/command', {
+        const res = await apiFetch('/api/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, caller_name: 'Web Cockpit' })
@@ -574,8 +609,13 @@
         const data = await res.json();
         const duration = Math.round(performance.now() - start);
 
-        resText.textContent = data.speech || "Command dispatched.";
-        resLatency.textContent = (data.latency_ms || duration) + " ms";
+        if (data.requires_confirmation) {
+          if (resBox) resBox.style.borderLeftColor = 'var(--warning)';
+          resText.textContent = `Confirmation required: ${data.speech || 'Action blocked pending explicit approval.'}`;
+        } else {
+          resText.textContent = data.speech || data.error || "Command dispatched.";
+        }
+        resLatency.textContent = (data.latency_ms ?? duration) + " ms";
         cmdInput.value = '';
         fetchReminders();
         fetchTVState();
@@ -593,7 +633,7 @@
       const start = performance.now();
 
       try {
-        const res = await fetch('/api/telephony/call', {
+        const res = await apiFetch('/api/telephony/call', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to: target, message, from: 'Web Cockpit' })
@@ -630,7 +670,7 @@
     // Live TV State Polling
     async function fetchTVState() {
       try {
-        const res = await fetch('/api/tv/state');
+        const res = await apiFetch('/api/tv/state');
         const data = await res.json();
         if (data && data.success) {
           const power = data.power || 'off';
@@ -653,7 +693,7 @@
     // Reminders Fetch & Render
     async function fetchReminders() {
       try {
-        const res = await fetch('/api/reminders');
+        const res = await apiFetch('/api/reminders');
         const data = await res.json();
         renderReminders(data.active || [], data.recent || []);
       } catch (e) {
@@ -677,19 +717,23 @@
         const sec = remainingSec % 60;
         const isPhone = rem.source === 'phone_call';
         const originClass = isPhone ? 'badge-phone' : 'badge-web';
-        const originText = isPhone ? `📞 ${rem.created_by || 'Phone'}` : `🌐 ${rem.created_by || 'Web'}`;
+        const originText = escapeHtml(isPhone ? `📞 ${rem.created_by || 'Phone'}` : `🌐 ${rem.created_by || 'Web'}`);
+        const safeTitle = escapeHtml(rem.title);
+        const safeTarget = escapeHtml(rem.target_person || 'User');
+        const safeChannels = escapeHtml(Array.isArray(rem.channels) ? rem.channels.join(', ') : 'all');
+        const safeId = escapeHtml(rem.id);
 
         html += `
           <div class="reminder-item">
             <div>
               <div class="reminder-header">
-                <strong>${rem.title}</strong>
+                <strong>${safeTitle}</strong>
                 <span class="origin-badge ${originClass}">${originText}</span>
               </div>
-              <div class="reminder-time">Due in ${min}m ${sec}s &bull; Target: ${rem.target_person || 'User'}</div>
-              <div class="reminder-channels">Channels: ${rem.channels ? rem.channels.join(', ') : 'all'}</div>
+              <div class="reminder-time">Due in ${min}m ${sec}s &bull; Target: ${safeTarget}</div>
+              <div class="reminder-channels">Channels: ${safeChannels}</div>
             </div>
-            <button class="btn-del" onclick="deleteReminder('${rem.id}')" title="Dismiss">&times;</button>
+            <button class="btn-del" data-reminder-id="${safeId}" title="Dismiss">&times;</button>
           </div>
         `;
       }
@@ -697,24 +741,33 @@
       // Recent completed items (up to 3)
       const completed = recentItems.filter(r => r.status === 'completed').slice(0, 3);
       for (const rem of completed) {
+        const safeTitle = escapeHtml(rem.title);
+        const safeCreatedBy = escapeHtml(rem.created_by || 'System');
+        const safeTarget = escapeHtml(rem.target_person || 'User');
         html += `
           <div class="reminder-item completed">
             <div>
               <div class="reminder-header">
-                <span style="text-decoration: line-through;">${rem.title}</span>
+                <span style="text-decoration: line-through;">${safeTitle}</span>
                 <span class="origin-badge" style="background: rgba(255,255,255,0.08); color: var(--text-muted);">✓ Completed</span>
               </div>
-              <div style="font-size: 0.75rem; color: var(--text-muted);">From: ${rem.created_by || 'System'} &bull; Target: ${rem.target_person || 'User'}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">From: ${safeCreatedBy} &bull; Target: ${safeTarget}</div>
             </div>
           </div>
         `;
       }
 
       remindersContainer.innerHTML = html;
+      remindersContainer.querySelectorAll('.btn-del[data-reminder-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-reminder-id');
+          if (id) deleteReminder(id);
+        });
+      });
     }
 
     async function deleteReminder(id) {
-      await fetch(`/api/reminders/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/reminders/${encodeURIComponent(id)}`, { method: 'DELETE' });
       fetchReminders();
     }
 
@@ -727,7 +780,7 @@
         if (!remTaskInput.value) return;
         const task = remTaskInput.value;
         const duration = parseFloat(remTimeSelect.value);
-        await fetch('/api/reminders', {
+        await apiFetch('/api/reminders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

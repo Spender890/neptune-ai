@@ -8,17 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ---
 
 ## [Unreleased]
-### Planned
-- Phase 2: Ollama and Bonsai 2 4B model deployment and tool-calling validation.
-- Phase 3: Wyoming Whisper and Piper neural speech microservices.
-- Phase 4: Neptune Fastify/TypeScript core backend and security gateway.
-- Phase 5: Home Assistant and Music Assistant / Jellyfin connectors.
-- Phase 6: Responsive Cockpit UI and Web Audio Push-to-Talk streaming.
-- Phase 7: End-to-end multi-device testing and performance tuning.
+### Planned (`v0.2.0`)
+- Interactive Web Confirmation Modal + `/api/confirm` endpoint for `consequential_entities` (`lock`, `cover`).
+- Live Browser Push-to-Talk Web Audio streaming via `/api/voice` to Wyoming Whisper and Piper.
+- Optional SQLite persistent audit log and ESLint/Prettier CI formatting enforcement.
 
 ---
 
-## [0.1.2] - 2026-11-10
+## [0.1.0] - 2026-11-15 (Community Launch Candidate)
+### Added
+- **Automated Testing:** Zero-dependency TypeScript suite (`backend/test/neptune.test.ts` — 17 tests across 8 suites) and Python suite (`tests/test_neptune_python.py` — 13 tests) using deterministic mocks and in-memory transport doubles.
+- **GitHub Actions CI (`.github/workflows/ci.yml`):** Automated TypeScript lint/build/test/audit, Python byte-compile/`unittest`, shell syntax checks, and Docker image builds (`neptune-backend`, `neptune-asterisk`).
+- **Reproducible FastPath Microbenchmark:** Added `scripts/benchmark-fastpath.ts` with raw timing percentiles and explicit scope disclosures.
+- **Open-Source Community & Audit Suite:** Added `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, GitHub issue/PR templates, `RELEASE_CHECKLIST_v0.1.0.md`, `OPEN_SOURCE_READINESS_AUDIT.md`, `TECHNICAL_DEBT.md`, `SECURITY_REVIEW.md`, and `TEST_COVERAGE_REPORT.md`.
+
+### Fixed & Hardened
+- **Security (`PermissionsGateway`):** Evaluated `consequential_entities` before `allowed_domains`, enforced strict entity regexes, and removed implicit `startsWith()` prefix bypasses.
+- **Security (`FastPathRouter` & `NeptuneEngine`):** Deterministically matched lock/cover actions (`requires_confirmation: true`), propagated confirmation flags across LLM tool calls, added 500/1000-character bounds, and added optional `NEPTUNE_API_KEY` authentication (`X-API-Key` / `Authorization: Bearer`).
+- **Security (`AgendaDaemon` & `TelephonyManager`):** Sanitized Asterisk `.call` fields against newline/quote/NUL injection, blocked emergency/unmapped external phone dialing, and guarded against concurrent `tick()` re-entrancy.
+- **Security (`frontend/dist/index.html`):** Added `escapeHtml()` before `innerHTML` rendering and delegated reminder deletion click handlers to eliminate stored DOM XSS.
+- **Reliability (`httpClient.ts`, `asterisk/Dockerfile`, `asterisk-voice-agent.py`):** Unified HTTP/HTTPS client with strict timeouts, atomic `.tmp` + `renameSync` reminder persistence, word-boundary `is_hangup_intent`, `wyoming==1.5.4` & unified `StdlibWyomingClient` TCP transport, and `.env.example` / `docker-compose.yml` alignment.
+
+---
+
+## Historical Pre-Launch Iterations (`2026-11-10` — consolidated into `v0.1.0`)
+
+### 2026-11-10 (Pre-launch Milestone C)
 ### Changed
 - Pinned Node.js backend container image to `node:20.18.1-alpine` (Active LTS).
 - Corrected Caddy certificate documentation to state coverage is strictly for `neptune.home.arpa` and removed direct-IP HTTPS claims.

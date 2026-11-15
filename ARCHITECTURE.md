@@ -1,9 +1,12 @@
 # NEPTUNE-AI: Self-Hosted Local AI Home Assistant
 ## Architectural Blueprint & System Design Specification
 
-*Document Version:* 1.3.0 (Phase 1 Final Technical Corrections)  
-*Status:* Pending Project Owner Approval  
-*Lead Architect:* Antigravity AI  
+*Document Version:* 1.4.0 (Reconciled with `v0.1.0` Codebase)  
+*Status:* Reference Architecture (`v0.1.0` implemented core + `v0.2.0` planned extensions labeled explicitly)  
+*Lead Architect:* Sultan (`Spender890`) & Contributors  
+
+> [!NOTE]
+> This document preserves the original Phase 1 dual-VM Proxmox VE blueprint while explicitly marking components modified during implementation (`qwen2.5:3b`, `reminders.json`, Asterisk PJSIP/AGI voice pipeline) vs. **Planned (`v0.2.0`)** items (`/api/voice/transcribe` browser mic upload, `/api/confirm` interactive modal, SQLite audit DB).
 
 ---
 
@@ -16,8 +19,7 @@
   * **VM 100:** Home Assistant OS (HAOS) for device integration, automations, and Music Assistant hub.
   * **VM 101:** Debian 12 running Neptune-AI services through Docker Compose.
   * **WD Sentinel DX4000:** Existing standalone server running Debian 12 and Jellyfin remains an independent, completely untouched external system on the local network (`192.168.1.60`). No changes to its OS or storage.
-* **Browser-First Voice & Web Interaction:** Users interact using the microphones, speakers, and web browsers of their existing devices (iOS, Android, Windows, Mac, and Smart TVs). **No ESP32, Raspberry Pi satellites, or dedicated microphone hardware** are used in this phase.
-* **Push-to-Talk (PTT) Mechanism:** Explicit client-side audio capture triggered by the user via Web Audio / MediaRecorder APIs. Complete audio recordings are transmitted on button release; no continuous background listening.
+* **Browser Cockpit & SIP Telephony Channels:** Users access text command control, reminders, and entertainment status through the Web Cockpit (`https://neptune.home.arpa`), and live bidirectional two-way voice interactions via Asterisk PJSIP telephone extensions (`1001`, `1002`, `7000`). Browser Push-to-Talk audio capture (`navigator.mediaDevices.getUserMedia` -> `/api/voice/transcribe`) is designed in Section 4 and **Planned (`v0.2.0`)**.
 * **Zero-Trust Security Boundary:** The local language model is treated as an untrusted reasoning engine with zero direct shell access, strict entity allowlists, and mandatory human confirmation for sensitive physical actions.
 
 ---
@@ -97,7 +99,7 @@ The project standardizes on **`neptune.home.arpa`** as the primary local hostnam
 * **Router Configuration:** On your TP-Link Omada Controller, a static **Local DNS Record** maps `neptune.home.arpa` directly to the Debian VM's static IP (`192.168.1.51`). This ensures fast, reliable name resolution across Android, iOS, Windows, Mac, and Smart TV browsers.
 
 ### 3.2. Caddy Internal CA & Certificate Coverage
-* **Specific Name Coverage:** In [`Caddyfile`](file:///c:/Users/Sultan/Documents/neptune-ai/Caddyfile), Caddy's internal Certificate Authority generates a certificate issued **specifically for `neptune.home.arpa`**.
+* **Specific Name Coverage:** In [`Caddyfile`](./Caddyfile), Caddy's internal Certificate Authority generates a certificate issued **specifically for `neptune.home.arpa`**.
 * **No Direct-IP HTTPS:** The internal certificate does **not** cover raw IP addresses (e.g. `192.168.1.51`). Accessing the assistant via direct IP (`https://192.168.1.51`) will produce a browser SSL domain mismatch error (`NET::ERR_CERT_COMMON_NAME_INVALID`). All client devices must access the system via the configured domain: **`https://neptune.home.arpa`**.
 * **Root CA Trust:** Client devices trust Caddy's root certificate (`root.crt`) once. Mobile browsers immediately recognize the connection as a trusted Secure Context, unlocking `navigator.mediaDevices.getUserMedia` without browser warnings.
 
@@ -105,15 +107,18 @@ The project standardizes on **`neptune.home.arpa`** as the primary local hostnam
 
 ## 4. Voice Subsystem & Audio Transcoding Pipeline
 
-### 4.1. Browser Audio Compatibility Reality
+### 4.1. Implemented Telephony Voice Pipeline (`v0.1.0`)
+In `v0.1.0`, live voice capture and speech synthesis run end-to-end over **Asterisk PJSIP + Python AGI (`scripts/asterisk-voice-agent.py`)**:
+* Asterisk records caller turns (`/var/spool/asterisk/tmp/user_turn.wav`), `sox` resamples to 16kHz mono PCM, `StdlibWyomingClient` / `wyoming` streams PCM to `wyoming-whisper` (`10300`), text routes to `FastPathRouter` / Ollama (`qwen2.5:3b`), and `wyoming-piper` (`10200`) synthesizes 22.05kHz PCM resampled via `sox` to 8kHz mono WAV for Asterisk `STREAM FILE`.
+
+### 4.2. Browser Audio Compatibility & Planned Complete-Recording Ingest (`v0.2.0` Design)
 Web browsers record in differing, non-uniform audio formats:
 * **iOS Safari (WebKit):** Typically emits `audio/mp4` (AAC container) or `audio/webm;codecs=opus`.
 * **Android Chrome / Desktop (Chromium):** Emits `audio/webm;codecs=opus`.
 * **Raw Web Audio API:** Emits uncompressed WAV (`audio/wav`) at 44.1 kHz or 48 kHz stereo.
 * **Whisper STT Requirement:** Wyoming-Whisper strictly requires **16,000 Hz, 16-bit, single-channel (mono) raw PCM audio**.
 
-### 4.2. Complete-Recording Ingestion Pipeline (Push-to-Talk)
-For the initial push-to-talk version, Neptune-AI avoids brittle chunked streaming and instead implements a **complete-recording ingestion pipeline**:
+For future browser push-to-talk (`v0.2.0`), Neptune-AI avoids brittle chunked streaming and targets a **complete-recording ingestion pipeline** (`/api/voice/transcribe` — *planned, not yet implemented in `backend/src/index.ts`*):
 
 ```
 [ User Holds PTT Button ]
@@ -180,14 +185,15 @@ All figures below represent **hypothesized design targets**, not verified measur
 
 ## 7. Container Orchestration & Image Pinning
 
-All third-party Docker images are pinned to explicit semantic release tags in [`docker-compose.yml`](file:///c:/Users/Sultan/Documents/neptune-ai/docker-compose.yml):
+All third-party Docker images are pinned to explicit release tags in [`docker-compose.yml`](./docker-compose.yml):
 
 * `caddy:2.8.4-alpine` (TLS reverse proxy)
-* `ollama/ollama:0.5.7` (Local LLM engine)
+* `ollama/ollama:0.4.16` (Local LLM engine — active default model `qwen2.5:3b`)
 * `rhasspy/wyoming-whisper:3.8.1` (faster-whisper STT)
 * `rhasspy/wyoming-piper:1.6.2` (ONNX TTS)
 * `node:20.18.1-alpine` (Node.js Active LTS for backend build & runner)
 * `neptune-backend:0.1.0` (Fastify TypeScript engine)
+* `neptune-asterisk:0.1.0` (Asterisk 20 PJSIP + Python AGI container)
 
 ### Image Update Policy
 * Unpinned `latest` tags are prohibited.
@@ -211,11 +217,11 @@ This occurred because Node.js/npm is not installed on the Windows agent host pat
 ## 9. Security Architecture & Threat Model
 
 * **Docker Socket Isolation:** To prevent root-equivalent privilege escalation, Docker execution is kept gated behind `sudo docker compose`. Users are not added to the `docker` group by default.
-* **Untrusted Model Boundary:** The language model cannot execute arbitrary code or shell commands. Tool calls must match strict Zod schemas.
-* **Entity Whitelist (`config/allowed_entities.json`):** Only explicitly whitelisted entities and domains can be queried or modified.
-* **Consequential Action Confirmation Gate:** Dangerous actions (locks, garage doors, alarm panels, power cutoffs) trigger a `PENDING_CONFIRMATION` dialog on the client device. Action is aborted if unconfirmed after 30 seconds.
-* **Credential Isolation:** Home Assistant tokens and Jellyfin API keys live strictly in backend server environment variables (`.env`). The frontend receives zero credentials.
-* **Immutable Audit Trail:** All utterances, detected intents, tool invocations, parameters, and results are logged to SQLite (`audit_logs` table).
+* **Untrusted Model Boundary:** The language model cannot execute arbitrary code or shell commands. Tool calls map strictly to explicit schemas (`ha_set_state`, `ha_set_climate`, `broadcast_announcement`, `telephony_call`, `media_control`) validated by `PermissionsGateway` and `TelephonyManager`.
+* **Entity Whitelist (`config/allowed_entities.json`):** Only explicitly whitelisted entities (exact match or explicit trailing `*` wildcard) and permitted domains can be queried or modified.
+* **Consequential Action Confirmation Gate:** High-consequence entities (`lock.*`, `cover.*`) are checked **before** `allowed_domains`, intercepted deterministically in `FastPathRouter`, and return `requires_confirmation: true` without executing (`v0.2.0` adds interactive `/api/confirm` approval flow).
+* **Credential Isolation:** Home Assistant tokens and Jellyfin API keys live strictly in backend server environment variables (`.env`). The frontend receives zero credentials. Optional `NEPTUNE_API_KEY` header verification secures backend routes when set.
+* **Persistence & Audit Logging:** Active reminders persist atomically to `data/reminders.json` (`.tmp` + rename). Operations log to container stdout; append-only SQLite `audit_logs` (`DATABASE_PATH`) is **Planned (`v0.2.0`)**.
 
 ---
 

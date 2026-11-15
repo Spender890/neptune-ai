@@ -4,26 +4,55 @@ export interface IntentResult {
   domain?: string;
   service?: string;
   entity_id?: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
   confirmation_speech?: string;
   requires_confirmation?: boolean;
 }
 
+const MAX_COMMAND_LENGTH = 500;
+
+/**
+ * Deterministic regex-based intent router evaluated before the LLM fallback.
+ * Guarantees sub-10ms predictable routing for standard smart-home, TV, reminder,
+ * and intercom commands without consuming LLM CPU cycles.
+ */
 export class FastPathRouter {
+  private tvEntityId: string;
+  private speakerEntityId: string;
+
+  constructor(tvEntityId?: string, speakerEntityId?: string) {
+    this.tvEntityId =
+      tvEntityId || process.env.TV_ENTITY_ID || 'media_player.living_room_lg_webos_tv_qned806qa';
+    this.speakerEntityId =
+      speakerEntityId || process.env.SPEAKER_ENTITY_ID || 'media_player.living_room_vlc_telnet';
+  }
+
   /**
    * Evaluates text for deterministic fast-path intent matching.
    * Execution target: < 5 ms. Zero LLM inference overhead.
    */
   public match(text: string): IntentResult {
-    const raw = text.trim();
-    const clean = raw.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+    if (typeof text !== 'string') {
+      return { matched: false };
+    }
 
-    const TV_ENTITY = 'media_player.living_room_lg_webos_tv_qned806qa';
-    const SPEAKER_ENTITY = 'media_player.living_room_vlc_telnet';
+    const raw = text.trim();
+    if (!raw || raw.length > MAX_COMMAND_LENGTH) {
+      return { matched: false };
+    }
+
+    const clean = raw.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+    if (!clean) {
+      return { matched: false };
+    }
+
+    const TV_ENTITY = this.tvEntityId;
+    const SPEAKER_ENTITY = this.speakerEntityId;
 
     // 0. WHOLE-HOUSE SPEAKER BROADCAST (VLC-TELNET)
-    // Matches: "broadcast dinner is ready", "announce guests are here", "tell the whole house time to eat", "say to the whole house hello"
-    const broadcastMatch = clean.match(/^(?:please\s+)?(?:broadcast|announce|tell\s+(?:the\s+)?whole\s+house|say\s+(?:to\s+)?(?:the\s+)?whole\s+house)\s+(?:saying\s+|that\s+)?(.+)$/);
+    const broadcastMatch = clean.match(
+      /^(?:please\s+)?(?:broadcast|announce|tell\s+(?:the\s+)?whole\s+house|say\s+(?:to\s+)?(?:the\s+)?whole\s+house)\s+(?:saying\s+|that\s+)?(.+)$/
+    );
     if (broadcastMatch) {
       const msg = broadcastMatch[1].trim();
       return {
@@ -42,9 +71,9 @@ export class FastPathRouter {
     }
 
     // 1. TELEPHONY: PROACTIVE OUTBOUND CALL & DELIVER MESSAGE
-    // Matches: "call sultan and tell him dinner is ready", "call desk and tell them meeting in 5 minutes",
-    // "phone family saying package arrived", "ring desk and tell them dinner is ready", "call 1002 and say hello"
-    const callMsgMatch = clean.match(/^(?:please\s+)?(?:call|phone|ring)\s+([a-z0-9_\s]+?)\s+(?:and\s+)?(?:tell\s+(?:them|him|her)\s+|saying\s+|say\s+)(.+)$/);
+    const callMsgMatch = clean.match(
+      /^(?:please\s+)?(?:call|phone|ring)\s+([a-z0-9_\s]+?)\s+(?:and\s+)?(?:tell\s+(?:them|him|her)\s+|saying\s+|say\s+)(.+)$/
+    );
     if (callMsgMatch) {
       const target = callMsgMatch[1].trim();
       const message = callMsgMatch[2].trim();
@@ -63,10 +92,51 @@ export class FastPathRouter {
       };
     }
 
-    // 2. TV STATE & "WHAT'S PLAYING ON TV" QUERY
-    // Matches: "what is playing on tv", "what's playing on tv", "what is on tv", "what's on tv",
-    // "is the tv on", "is tv on", "tv status", "what is the tv playing", "tell me what is playing on tv"
-    const tvStateMatch = clean.match(/^(?:please\s+)?(?:tell\s+me\s+)?(?:what(?:'s|\s+is)\s+(?:playing\s+on|on)\s+(?:the\s+)?tv|is\s+(?:the\s+)?tv\s+on|(?:check\s+)?tv\s+status|what(?:'s|\s+is)\s+(?:the\s+)?tv\s+playing|whats\s+on\s+(?:the\s+)?tv)$/);
+    // 2. CONSEQUENTIAL LOCKS & GARAGE / DOOR COVERS (Always deterministic so LLM cannot alter args)
+    const lockMatch = clean.match(/^(?:please\s+)?(lock|unlock)\s+(?:the\s+)?([a-z0-9_\s]+)$/);
+    if (lockMatch) {
+      const action = lockMatch[1];
+      let target = lockMatch[2].trim().replace(/\s+(?:lock|locks)$/i, '').trim().replace(/\s+/g, '_');
+      if (!target) {
+        target = 'front_door';
+      }
+      const entityId = `lock.${target}`;
+      return {
+        matched: true,
+        intent: 'ha_lock',
+        domain: 'lock',
+        service: action,
+        entity_id: entityId,
+        confirmation_speech: `${action === 'lock' ? 'Locking' : 'Unlocking'} the ${target.replace(/_/g, ' ')}.`,
+        requires_confirmation: true,
+      };
+    }
+
+    const coverMatch = clean.match(
+      /^(?:please\s+)?(open|close)\s+(?:the\s+)?([a-z0-9_\s]*?\b(?:garage\s+door|garage|front\s+door|door|gate|blinds|shutter|cover))$/
+    );
+    if (coverMatch) {
+      const action = coverMatch[1];
+      let target = coverMatch[2].trim().replace(/\s+/g, '_');
+      if (target === 'garage') {
+        target = 'garage_door';
+      }
+      const entityId = `cover.${target}`;
+      return {
+        matched: true,
+        intent: 'ha_cover',
+        domain: 'cover',
+        service: action === 'open' ? 'open_cover' : 'close_cover',
+        entity_id: entityId,
+        confirmation_speech: `${action === 'open' ? 'Opening' : 'Closing'} the ${target.replace(/_/g, ' ')}.`,
+        requires_confirmation: true,
+      };
+    }
+
+    // 3. TV STATE & "WHAT'S PLAYING ON TV" QUERY
+    const tvStateMatch = clean.match(
+      /^(?:please\s+)?(?:tell\s+me\s+)?(?:what(?:'s|\s+is)\s+(?:playing\s+on|on)\s+(?:the\s+)?tv|is\s+(?:the\s+)?tv\s+on|(?:check\s+)?tv\s+status|what(?:'s|\s+is)\s+(?:the\s+)?tv\s+playing|whats\s+on\s+(?:the\s+)?tv)$/
+    );
     if (tvStateMatch) {
       return {
         matched: true,
@@ -79,11 +149,10 @@ export class FastPathRouter {
       };
     }
 
-    // 3. ROUTE TV AUDIO OUTPUT (Home Speakers vs TV Speakers)
-    // A. Route to Home Speakers / Amplifier / Whole House:
-    // "route tv audio through home speakers", "route tv audio to home speakers", "route tv sound to home speakers",
-    // "switch tv sound to whole house", "switch tv audio to amplifier", "play tv audio through home speakers"
-    const routeToSpeakersMatch = clean.match(/^(?:please\s+)?(?:route|switch|play|send)\s+(?:the\s+)?tv\s+(?:audio|sound)\s+(?:through|to)\s+(?:the\s+)?(home\s+speakers|whole\s+house|amplifier|external\s+speakers|speakers)$/);
+    // 4. ROUTE TV AUDIO OUTPUT (Home Speakers vs TV Speakers)
+    const routeToSpeakersMatch = clean.match(
+      /^(?:please\s+)?(?:route|switch|play|send)\s+(?:the\s+)?tv\s+(?:audio|sound)\s+(?:through|to)\s+(?:the\s+)?(home\s+speakers|whole\s+house|amplifier|external\s+speakers|speakers)$/
+    );
     if (routeToSpeakersMatch) {
       return {
         matched: true,
@@ -97,9 +166,9 @@ export class FastPathRouter {
       };
     }
 
-    // B. Route back to internal TV speakers:
-    // "switch tv audio back to tv speakers", "route tv audio to tv speakers", "switch tv sound back to tv", "use tv speakers"
-    const routeToTVMatch = clean.match(/^(?:please\s+)?(?:(?:route|switch|set)\s+(?:the\s+)?tv\s+(?:audio|sound)?\s*(?:back\s+)?to\s+(?:the\s+)?(?:internal\s+)?tv\s+speakers?|use\s+tv\s+speakers|switch\s+tv\s+(?:sound|audio)\s+back\s+to\s+tv)$/);
+    const routeToTVMatch = clean.match(
+      /^(?:please\s+)?(?:(?:route|switch|set)\s+(?:the\s+)?tv\s+(?:audio|sound)?\s*(?:back\s+)?to\s+(?:the\s+)?(?:internal\s+)?tv\s+speakers?|use\s+tv\s+speakers|switch\s+tv\s+(?:sound|audio)\s+back\s+to\s+tv)$/
+    );
     if (routeToTVMatch) {
       return {
         matched: true,
@@ -113,8 +182,24 @@ export class FastPathRouter {
       };
     }
 
-    // 4. LIGHTS & SWITCHES ON / OFF
-    // Example: "turn off the kitchen light", "switch on living room", "turn off the light"
+    // 4b. TV POWER ON / OFF (Matched before lights/switches so "turn on the tv" never hits light.tv)
+    const tvPowerMatch = clean.match(
+      /^(?:please\s+)?(?:turn|switch|power)\s+(on|off)\s+(?:the\s+)?(?:(?:living\s+room|main|smart)\s+)?(?:tv|television)$/
+    );
+    if (tvPowerMatch) {
+      const state = tvPowerMatch[1];
+      return {
+        matched: true,
+        intent: 'tv_power',
+        domain: 'media_player',
+        service: state === 'on' ? 'turn_on' : 'turn_off',
+        entity_id: TV_ENTITY,
+        confirmation_speech: `Turning ${state} the TV.`,
+        requires_confirmation: false,
+      };
+    }
+
+    // 5. LIGHTS & SWITCHES ON / OFF
     const toggleMatch = clean.match(/^(?:please\s+)?(?:turn|switch)\s+(on|off)\s+(?:the\s+)?([a-z0-9_\s]+)$/);
     if (toggleMatch) {
       const state = toggleMatch[1];
@@ -136,9 +221,10 @@ export class FastPathRouter {
       };
     }
 
-    // 5. TV / MEDIA VOLUME CONTROLS
-    // A. Step Volume: "lower the volume", "turn down the tv", "volume down", "raise the volume", "turn up the tv", "volume up"
-    const volStepMatch = clean.match(/^(?:please\s+)?(?:(turn|volume)\s+(up|down)|(raise|increase|lower|decrease)\s+(?:the\s+)?(?:tv\s+)?volume|turn\s+(up|down)\s+(?:the\s+)?tv)$/);
+    // 6. TV / MEDIA VOLUME CONTROLS
+    const volStepMatch = clean.match(
+      /^(?:please\s+)?(?:(turn|volume)\s+(up|down)|(raise|increase|lower|decrease)\s+(?:the\s+)?(?:tv\s+)?volume|turn\s+(up|down)\s+(?:the\s+)?tv)$/
+    );
     if (volStepMatch) {
       const isUp = clean.includes('up') || clean.includes('raise') || clean.includes('increase');
       const service = isUp ? 'volume_up' : 'volume_down';
@@ -154,8 +240,9 @@ export class FastPathRouter {
       };
     }
 
-    // B. Set Volume Level: "set volume to 40 percent", "volume 50", "set tv volume to 30"
-    const volumeMatch = clean.match(/^(?:please\s+)?(?:set\s+)?(?:the\s+)?(?:tv\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*%)?$/);
+    const volumeMatch = clean.match(
+      /^(?:please\s+)?(?:set\s+)?(?:the\s+)?(?:tv\s+)?volume\s+(?:to\s+)?(\d{1,3})(?:\s*%)?$/
+    );
     if (volumeMatch) {
       const level = Math.max(0, Math.min(100, parseInt(volumeMatch[1], 10)));
       return {
@@ -170,9 +257,10 @@ export class FastPathRouter {
       };
     }
 
-    // 6. MEDIA / TV PLAYBACK CONTROLS
-    // Example: "pause tv", "resume playback", "stop", "mute tv", "unmute"
-    const mediaPlaybackMatch = clean.match(/^(?:please\s+)?(pause|resume|stop|mute|unmute)\s*(?:the\s+)?([a-z0-9_\s]*)$/);
+    // 7. MEDIA / TV PLAYBACK CONTROLS
+    const mediaPlaybackMatch = clean.match(
+      /^(?:please\s+)?(pause|resume|stop|mute|unmute)\s*(?:the\s+)?([a-z0-9_\s]*)$/
+    );
     if (mediaPlaybackMatch) {
       const action = mediaPlaybackMatch[1];
       const target = mediaPlaybackMatch[2].trim() || 'living_room_tv';
@@ -196,9 +284,10 @@ export class FastPathRouter {
       };
     }
 
-    // 7. TV APP LAUNCHING & INPUT / SOURCE SWITCHING
-    // A. Switch Source / Input: "switch source to HDMI 2", "change input to HDMI 3", "switch source to Live TV"
-    const sourceMatch = clean.match(/^(?:please\s+)?(?:switch|change|set)\s+(?:the\s+)?(?:source|input)\s+to\s+(?:the\s+)?([a-z0-9_\s+]+)$/);
+    // 8. TV APP LAUNCHING & INPUT / SOURCE SWITCHING
+    const sourceMatch = clean.match(
+      /^(?:please\s+)?(?:switch|change|set)\s+(?:the\s+)?(?:source|input)\s+to\s+(?:the\s+)?([a-z0-9_\s+]+)$/
+    );
     if (sourceMatch) {
       const rawSource = sourceMatch[1].trim();
       return {
@@ -213,9 +302,31 @@ export class FastPathRouter {
       };
     }
 
-    // B. Direct App Launching: "launch youtube", "open jellyfin on tv", "open netflix", "launch apple tv"
-    const appKeywords = ['youtube', 'jellyfin', 'netflix', 'apple tv', 'disney', 'disney plus', 'disney+', 'prime video', 'prime', 'amazon prime', 'twitch', 'live tv', 'web browser', 'browser', 'ps4', 'hdmi 2', 'hdmi 3', 'hdmi 4'];
-    const appRegex = new RegExp(`^(?:please\\s+)?(?:launch|open|switch\\s+to|start)\\s+(?:the\\s+)?(${appKeywords.map(k => k.replace('+', '\\+')).join('|')})(?:\\s+on\\s+(?:the\\s+)?tv)?$`);
+    const appKeywords = [
+      'youtube',
+      'jellyfin',
+      'netflix',
+      'apple tv',
+      'disney',
+      'disney plus',
+      'disney+',
+      'prime video',
+      'prime',
+      'amazon prime',
+      'twitch',
+      'live tv',
+      'web browser',
+      'browser',
+      'ps4',
+      'hdmi 2',
+      'hdmi 3',
+      'hdmi 4',
+    ];
+    const appRegex = new RegExp(
+      `^(?:please\\s+)?(?:launch|open|switch\\s+to|start)\\s+(?:the\\s+)?(${appKeywords
+        .map((k) => k.replace('+', '\\+'))
+        .join('|')})(?:\\s+on\\s+(?:the\\s+)?tv)?$`
+    );
     const directAppMatch = clean.match(appRegex);
     if (directAppMatch) {
       const appName = directAppMatch[1].trim();
@@ -231,8 +342,9 @@ export class FastPathRouter {
       };
     }
 
-    // C. TV On-Screen Toast Notifications
-    const tvToastMatch = clean.match(/^(?:please\s+)?(?:show|display|send)\s+(?:a\s+)?(?:toast|notification|alert|message)\s+(?:on\s+tv\s+)?(?:saying\s+)?(.+)$/);
+    const tvToastMatch = clean.match(
+      /^(?:please\s+)?(?:show|display|send)\s+(?:a\s+)?(?:toast|notification|alert|message)\s+(?:on\s+tv\s+)?(?:saying\s+)?(.+)$/
+    );
     if (tvToastMatch) {
       const msg = tvToastMatch[1].replace(/on\s+(?:the\s+)?tv$/, '').trim();
       return {
@@ -247,12 +359,12 @@ export class FastPathRouter {
       };
     }
 
-    // 8. MOVIE & SHOW STREAMING (JELLYFIN -> TV)
-    // Example: "play zootopia on tv", "play the movie interstellar", "watch stranger things on tv", "play breaking bad"
-    const mediaMatch = clean.match(/^(?:please\s+)?(?:play|watch)\s+(?:the\s+)?(?:movie|show|series\s+)?(.+?)(?:\s+on\s+(?:the\s+)?tv)?$/);
+    // 9. MOVIE & SHOW STREAMING (JELLYFIN -> TV)
+    const mediaMatch = clean.match(
+      /^(?:please\s+)?(?:play|watch)\s+(?:the\s+)?(?:movie|show|series\s+)?(.+?)(?:\s+on\s+(?:the\s+)?tv)?$/
+    );
     if (mediaMatch) {
       const title = mediaMatch[1].trim();
-      // Check if it's an app that fell through
       if (appKeywords.includes(title)) {
         return {
           matched: true,
@@ -278,9 +390,10 @@ export class FastPathRouter {
       };
     }
 
-    // 9. CLIMATE TARGET TEMPERATURE
-    // Example: "set thermostat to 22 degrees", "set temperature to 21"
-    const climateMatch = clean.match(/^(?:please\s+)?set\s+(?:the\s+)?(?:thermostat|ac|temperature|climate)\s+(?:to\s+)?(\d{1,2})(?:\s*degrees)?$/);
+    // 10. CLIMATE TARGET TEMPERATURE
+    const climateMatch = clean.match(
+      /^(?:please\s+)?set\s+(?:the\s+)?(?:thermostat|ac|temperature|climate)\s+(?:to\s+)?(\d{1,2})(?:\s*degrees)?$/
+    );
     if (climateMatch) {
       const temp = parseInt(climateMatch[1], 10);
       return {
@@ -295,10 +408,11 @@ export class FastPathRouter {
       };
     }
 
-    // 10. REMINDERS & TIMERS (Home Assistant native timer/todo compatible)
-    // Matches: "remind me to check the oven in 1 minute", "set timer for 10 minutes", "timer 5 min"
-    const reminderPattern = /^(?:please\s+)?(?:remind\s+(?:me\s+)?to|set\s+(?:a\s+)?timer\s+for)\s+(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|minute|minutes|min|mins|hour|hours|hr|hrs)?$/;
-    const timerInvertedPattern = /^(?:please\s+)?set\s+(?:a\s+)?timer\s+for\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|minute|minutes|min|mins|hour|hours|hr|hrs)?\s*(?:for|to)?\s*(.*)$/;
+    // 11. REMINDERS & TIMERS
+    const reminderPattern =
+      /^(?:please\s+)?(?:remind\s+(?:me\s+)?to|set\s+(?:a\s+)?timer\s+for)\s+(.+?)\s+in\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|minute|minutes|min|mins|hour|hours|hr|hrs)?$/;
+    const timerInvertedPattern =
+      /^(?:please\s+)?set\s+(?:a\s+)?timer\s+for\s+(\d+(?:\.\d+)?)\s*(second|seconds|sec|secs|minute|minutes|min|mins|hour|hours|hr|hrs)?\s*(?:for|to)?\s*(.*)$/;
 
     const match1 = clean.match(reminderPattern);
     const match2 = !match1 ? clean.match(timerInvertedPattern) : null;
@@ -318,7 +432,10 @@ export class FastPathRouter {
         task = (match2[3] || 'timer').trim();
       }
 
-      // Normalize to minutes
+      if (!Number.isFinite(value) || value <= 0) {
+        return { matched: false };
+      }
+
       let minutes = value;
       if (unit.startsWith('sec')) minutes = value / 60;
       if (unit.startsWith('h')) minutes = value * 60;
@@ -340,7 +457,7 @@ export class FastPathRouter {
       };
     }
 
-    // No fast-path match: route to Qwen 2.5 LLM reasoning
+    // No fast-path match: route to local LLM reasoning
     return { matched: false };
   }
 }

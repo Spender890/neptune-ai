@@ -3,12 +3,49 @@
 This guide provides an ordered, verifiable manual installation procedure for Neptune-AI Phase 1.
 
 ### Target Architecture Overview
-* **VM 100:** Home Assistant OS (HAOS) on Proxmox VE (3.0 GB RAM, 2 vCPUs).
-* **VM 101:** Debian 12 minimal on Proxmox VE (8.0 GB RAM, 6 vCPUs).
-* **WD Sentinel DX4000:** Standalone server running Debian 12 and Jellyfin (`192.168.1.60`) — **Remains completely untouched**.
-* **Zero Host Modifications:** No disks formatted, no storage modified, and no automatic ZFS changes executed.
+* **Supported Operating Systems:** Debian 12 (primary tested target), Ubuntu 22.04/24.04 LTS x86-64 (for Docker host).
+* **CPU & Hardware Requirements:** x86-64 CPU with **AVX2** support (required by `faster-whisper` and Ollama CPU inference), minimum **8.0 GB RAM** dedicated to the Neptune AI stack (plus ~3.0 GB if self-hosting Home Assistant OS in a separate VM), ~20 GB free disk for container images and `qwen2.5:3b` weights. No discrete GPU required.
+* **Two Supported Topologies:**
+  1. **Standalone Linux Docker Host (Quickstart below):** Run Neptune-AI containers directly on any Linux machine with Docker Compose v2, pointing `.env` at your existing Home Assistant and Jellyfin LAN instances.
+  2. **Proxmox VE Two-VM Lab (Parts A–D below):** VM 100 (`HAOS`, 3.0 GB RAM, 2 vCPUs) + VM 101 (`Debian 12 AI`, 8.0 GB RAM, 6 vCPUs) + external NAS (`Jellyfin`).
 
 ---
+
+## Standalone Quickstart (Any Debian/Ubuntu Docker Host)
+
+If you already run Home Assistant on your LAN and want to deploy Neptune-AI on a single Linux host without Proxmox VE:
+
+1. **Install Prerequisites:** Docker Engine (`>= 24`), Docker Compose plugin (`v2+`), and `git`.
+2. **Clone & Configure:**
+   ```bash
+   git clone https://github.com/Spender890/neptune-ai.git /opt/neptune
+   cd /opt/neptune
+   cp .env.example .env
+   cp config/contacts.json.example config/contacts.json
+   git update-index --skip-worktree asterisk/pjsip.conf
+   cp asterisk/pjsip.conf.example asterisk/pjsip.conf
+   ```
+   Edit `.env` (`HOMEASSISTANT_URL`, `HOMEASSISTANT_TOKEN`, `TV_ENTITY_ID`, `SPEAKER_ENTITY_ID`, optional `NEPTUNE_API_KEY`) and replace `CHANGE_ME_STRONG_SIP_SECRET_*` passwords inside `asterisk/pjsip.conf`.
+3. **Verify Config, Build & Start:**
+   ```bash
+   sudo docker compose config -q
+   sudo docker compose build
+   sudo docker compose up -d
+   ```
+4. **Download the Local LLM Model (First Run):**
+   ```bash
+   sudo docker compose exec ollama ollama pull qwen2.5:3b
+   ```
+5. **Verify Health:**
+   ```bash
+   sudo docker compose ps
+   curl -fsS http://127.0.0.1:3000/api/health
+   ```
+   Expect JSON with `"status": "ok"` and `"version": "0.1.0"`. Review `config/allowed_entities.json` and `Caddyfile` (`neptune.home.arpa` LAN DNS) before enabling client access.
+
+---
+
+> Below is the full **Proxmox VE Dual-VM** deployment procedure (`VM 100 HAOS` + `VM 101 Debian 12`) with read-only host audit and non-destructive defaults.
 
 ## Part A: Proxmox VE Host (Commands to Run on Proxmox Shell as `root`)
 
@@ -191,32 +228,39 @@ Log into VM 101 via SSH:
 
   # 2. Contacts and telephony credentials setup
   cp config/contacts.json.example config/contacts.json
+  # Protect tracked pjsip.conf from accidental credential commits before editing secrets:
+  git update-index --skip-worktree asterisk/pjsip.conf
   cp asterisk/pjsip.conf.example asterisk/pjsip.conf
   nano asterisk/pjsip.conf  # Set strong unique passwords for extensions 1001, 1002, 7000
   ```
   Confirm:
-  * `HOMEASSISTANT_URL=http://homeassistant.local:8123` (or your HAOS IP)
-  * `JELLYFIN_URL=http://jellyfin.local:8096` (or your media server IP)
+  * `HOMEASSISTANT_URL=http://192.168.1.50:8123` (or your Home Assistant IP/URL)
+  * `HOMEASSISTANT_TOKEN=...` (Home Assistant Long-Lived Access Token)
+  * `TV_ENTITY_ID` and `SPEAKER_ENTITY_ID` match entities in Home Assistant and `config/allowed_entities.json`
+  * Optional: set `NEPTUNE_API_KEY` if your LAN is shared or untrusted
 * **Verification Command:**
   ```bash
-  test -f .env && test -f config/contacts.json && test -f asterisk/pjsip.conf && echo "Configuration files created successfully"
+  test -f .env && test -f config/contacts.json && test -f asterisk/pjsip.conf && sudo docker compose config -q && echo "Configuration files validated successfully"
   ```
 * **Recovery / Rollback:**
-  Delete or re-copy files from their corresponding `.example` templates.
+  Delete or re-copy files from their corresponding `.example` templates (`git checkout -- asterisk/pjsip.conf` to restore template defaults).
 
 ---
 
-### Step C.3: Build & Launch Docker Stack
+### Step C.3: Build, Launch Docker Stack & Pull LLM Weights
 * **Action (Inside Debian VM in `/opt/neptune`):**
   ```bash
   sudo docker compose build
   sudo docker compose up -d
+  # First-run model download (matches LLM_MODEL in .env):
+  sudo docker compose exec ollama ollama pull qwen2.5:3b
   ```
 * **Verification Command:**
   ```bash
   sudo docker compose ps
+  curl -fsS http://127.0.0.1:3000/api/health
   ```
-  *Expected Output:* All six services (`neptune-caddy`, `neptune-backend`, `neptune-ollama`, `neptune-whisper`, `neptune-piper`, `neptune-asterisk`) report status `Up`.
+  *Expected Output:* All six services (`neptune-caddy`, `neptune-backend`, `neptune-ollama`, `neptune-whisper`, `neptune-piper`, `neptune-asterisk`) report status `Up` / `healthy`, and `/api/health` returns `"version": "0.1.0"`.
 * **Recovery / Rollback Procedure:**
   ```bash
   sudo docker compose down
@@ -265,5 +309,55 @@ sudo docker cp neptune-caddy:/data/caddy/pki/authorities/local/root.crt ~/neptun
 2. Open **Settings** $\rightarrow$ **Security & Privacy** $\rightarrow$ **More Security Settings** $\rightarrow$ **Encryption & Credentials**.
 3. Tap **Install a certificate** $\rightarrow$ **CA Certificate**.
 4. Select `neptune-root.crt` and confirm.
-5. In Chrome, navigate to `https://neptune.home.arpa`. Full microphone access is now unlocked.
+5. In Chrome, navigate to `https://neptune.home.arpa`. Wait for TLS trust verification.
 * **Rollback:** Settings $\rightarrow$ Security $\rightarrow$ Encryption & Credentials $\rightarrow$ User Credentials $\rightarrow$ Remove Certificate.
+
+---
+
+## Part E: Upgrade, Backup & Recovery Procedures
+
+### Backup (Run Before Any Upgrade)
+```bash
+cd /opt/neptune
+mkdir -p ~/neptune-backups
+tar -czf ~/neptune-backups/neptune-backup-$(date +%F).tar.gz \
+  .env \
+  config/allowed_entities.json \
+  config/contacts.json \
+  asterisk/pjsip.conf \
+  data/
+```
+Back up Caddy's internal PKI volume if you want existing mobile root certificates to remain trusted across container rebuilds:
+```bash
+sudo docker cp neptune-caddy:/data/caddy ~/neptune-backups/caddy-pki-$(date +%F)
+```
+
+### Standard Upgrade
+```bash
+cd /opt/neptune
+git fetch origin
+git pull --rebase
+sudo docker compose build
+sudo docker compose up -d
+```
+
+### Recovery
+1. Stop containers: `sudo docker compose down`.
+2. Restore backed-up `.env`, `config/`, `asterisk/pjsip.conf`, and `data/reminders.json`.
+3. Rebuild previous tagged commit: `git checkout v0.1.0 && sudo docker compose up -d --build`.
+
+---
+
+## Part F: Verification Scope & Environment Matrix (`v0.1.0`)
+
+To maintain strict transparency prior to public release, note what was **verified locally** in this audit versus what **requires live Linux/Docker/LAN hardware**:
+
+| Verification Check | Status in `v0.1.0` Audit | Environment / Notes |
+| :--- | :--- | :--- |
+| TypeScript unit & mock HTTP integration tests (`15` tests / `8` suites) | **Verified Pass** | Node `v26.13.0` (`playwright/driver/node.exe --import ./backend/test/ts-loader.mjs --test`) |
+| Python Wyoming/AGI & repo security invariant tests (`13` tests) | **Verified Pass** | Python `3.15.1` (`python -m unittest discover -s tests -v`) |
+| FastPath CPU microbenchmark (`10,000` iterations) | **Verified Pass** | Synthetic local CPU measurement only (`scripts/benchmark-fastpath.ts`) |
+| Python byte-compilation & JSON config validation | **Verified Pass** | All Python scripts and 5 JSON files parse cleanly |
+| `tsc --noEmit` & `npm install` (`fastify` resolution) | **Not Run Locally** | `npm` / `tsc` unavailable on Windows host; automated in `.github/workflows/ci.yml` |
+| `docker compose build` / `up -d` (6 services) | **Not Run Locally** | Docker Engine not present on Windows host; image builds configured in `ci.yml` |
+| Live HAOS, LG webOS TV, Jellyfin, Ollama, Whisper, Piper, SIP Extension `7000` | **Not Run Locally** | Requires target Proxmox/Debian/LAN appliances and physical devices |
