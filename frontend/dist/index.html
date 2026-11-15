@@ -299,6 +299,40 @@
     }
     .badge-phone { background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.4); }
     .badge-web { background: rgba(0, 210, 255, 0.2); color: var(--accent); border: 1px solid rgba(0, 210, 255, 0.4); }
+    .badge-grp-primary { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+    .badge-grp-desk { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+    .badge-grp-speakers { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .badge-grp-all { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+
+    .rem-tabs {
+      display: flex;
+      gap: 0.35rem;
+      margin-bottom: 0.75rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 0.5rem;
+      overflow-x: auto;
+    }
+    .rem-tab {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 0.25rem 0.6rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .rem-tab:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .rem-tab.active {
+      background: rgba(0, 210, 255, 0.2);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
     .reminder-time {
       font-size: 0.78rem;
       color: var(--accent);
@@ -484,19 +518,37 @@
         <span id="reminders-count" class="latency-tag">0 Active</span>
       </div>
 
-      <!-- Add Reminder Quick Form -->
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">Set New Universal Reminder:</div>
-      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.85rem;">
-        <input type="text" id="rem-task-input" class="text-input" style="flex: 1;" placeholder='e.g., "Check the oven"' />
-        <select id="rem-time-select" class="select-input" style="width: 110px;">
-          <option value="0.166">10s (Test)</option>
-          <option value="1">1 min</option>
-          <option value="5" selected>5 min</option>
-          <option value="10">10 min</option>
-          <option value="30">30 min</option>
-          <option value="60">1 hour</option>
-        </select>
-        <button class="btn-send" id="rem-add-btn" style="padding: 0 0.85rem; background: #a855f7; color: white;">+ Add</button>
+      <!-- Add Reminder Form with Specific Groups -->
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.4rem;">Set New Targeted Reminder:</div>
+      <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.85rem;">
+        <input type="text" id="rem-task-input" class="text-input" style="width: 100%;" placeholder='e.g., "Check the oven" or "Meeting in 10 minutes"' />
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <select id="rem-target-select" class="select-input" style="flex: 1; min-width: 170px;">
+            <option value="Primary" data-channels="call,tv,web">📱 Primary (1001 Mobile Phone)</option>
+            <option value="Desk" data-channels="call,tv,web">💻 Desk (1002 Tablet / Deskphone)</option>
+            <option value="House Speakers" data-channels="speaker">🔊 Whole-House Speakers Only</option>
+            <option value="All Combined" data-channels="all" selected>🌐 All Combined (Both Phones + Speakers + TV)</option>
+          </select>
+          <select id="rem-time-select" class="select-input" style="width: 110px;">
+            <option value="0.166">10s (Test)</option>
+            <option value="1">1 min</option>
+            <option value="5" selected>5 min</option>
+            <option value="10">10 min</option>
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+            <option value="60">1 hour</option>
+            <option value="120">2 hours</option>
+          </select>
+          <button class="btn-send" id="rem-add-btn" style="padding: 0 1rem; background: #a855f7; color: white; white-space: nowrap;">+ Set</button>
+        </div>
+      </div>
+
+      <!-- Group Filter Tabs -->
+      <div class="rem-tabs" id="rem-filter-tabs">
+        <button class="rem-tab active" data-filter="all">All Groups</button>
+        <button class="rem-tab" data-filter="primary">Primary (1001)</button>
+        <button class="rem-tab" data-filter="desk">Desk (1002)</button>
+        <button class="rem-tab" data-filter="speaker">House Speakers</button>
       </div>
 
       <div class="reminders-list" id="reminders-container">
@@ -691,11 +743,33 @@
     }
 
     // Reminders Fetch & Render
+    let currentReminderFilter = 'all';
+    let cachedActiveReminders = [];
+    let cachedRecentReminders = [];
+
+    const remFilterTabs = document.getElementById('rem-filter-tabs');
+    if (remFilterTabs) {
+      remFilterTabs.querySelectorAll('.rem-tab').forEach((tab) => {
+        tab.addEventListener('click', () => {
+          remFilterTabs.querySelectorAll('.rem-tab').forEach((t) => t.classList.remove('active'));
+          tab.classList.add('active');
+          currentReminderFilter = tab.getAttribute('data-filter') || 'all';
+          renderFilteredReminders();
+        });
+      });
+    }
+
+    function renderFilteredReminders() {
+      renderReminders(cachedActiveReminders, cachedRecentReminders);
+    }
+
     async function fetchReminders() {
       try {
         const res = await apiFetch('/api/reminders');
         const data = await res.json();
-        renderReminders(data.active || [], data.recent || []);
+        cachedActiveReminders = data.active || [];
+        cachedRecentReminders = data.recent || [];
+        renderReminders(cachedActiveReminders, cachedRecentReminders);
       } catch (e) {
         console.error(e);
       }
@@ -703,15 +777,35 @@
 
     function renderReminders(activeItems, recentItems) {
       remindersCount.textContent = `${activeItems.length} Active`;
-      if (activeItems.length === 0 && recentItems.length === 0) {
-        remindersContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 1.5rem;">No active reminders. Use voice or form above to set one.</div>';
+
+      let filteredActive = activeItems;
+      if (currentReminderFilter === 'primary') {
+        filteredActive = activeItems.filter((r) => {
+          const t = (r.target_person || '').toLowerCase();
+          return t.includes('primary') || t === '1001' || t.includes('all');
+        });
+      } else if (currentReminderFilter === 'desk') {
+        filteredActive = activeItems.filter((r) => {
+          const t = (r.target_person || '').toLowerCase();
+          return t.includes('desk') || t === '1002' || t.includes('all');
+        });
+      } else if (currentReminderFilter === 'speaker') {
+        filteredActive = activeItems.filter((r) => {
+          const t = (r.target_person || '').toLowerCase();
+          const ch = Array.isArray(r.channels) ? r.channels : [];
+          return t.includes('speaker') || (ch.includes('speaker') && !ch.includes('call')) || t.includes('all');
+        });
+      }
+
+      if (filteredActive.length === 0 && recentItems.length === 0) {
+        remindersContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 1.5rem;">No active reminders for this group.</div>';
         return;
       }
 
       let html = '';
 
       // Active items
-      for (const rem of activeItems) {
+      for (const rem of filteredActive) {
         const remainingSec = Math.max(0, Math.round((rem.due_at - Date.now()) / 1000));
         const min = Math.floor(remainingSec / 60);
         const sec = remainingSec % 60;
@@ -723,11 +817,25 @@
         const safeChannels = escapeHtml(Array.isArray(rem.channels) ? rem.channels.join(', ') : 'all');
         const safeId = escapeHtml(rem.id);
 
+        const targetLower = (rem.target_person || '').toLowerCase();
+        const channels = Array.isArray(rem.channels) ? rem.channels : [];
+        let groupBadge = '';
+        if (targetLower.includes('desk') || targetLower === '1002') {
+          groupBadge = '<span class="origin-badge badge-grp-desk">💻 Desk (1002)</span>';
+        } else if (targetLower.includes('speaker') || (channels.includes('speaker') && !channels.includes('call') && !channels.includes('all'))) {
+          groupBadge = '<span class="origin-badge badge-grp-speakers">🔊 House Speakers</span>';
+        } else if (targetLower.includes('all') || channels.includes('all')) {
+          groupBadge = '<span class="origin-badge badge-grp-all">🌐 All Combined</span>';
+        } else {
+          groupBadge = '<span class="origin-badge badge-grp-primary">📱 Primary (1001)</span>';
+        }
+
         html += `
           <div class="reminder-item">
             <div>
               <div class="reminder-header">
                 <strong>${safeTitle}</strong>
+                ${groupBadge}
                 <span class="origin-badge ${originClass}">${originText}</span>
               </div>
               <div class="reminder-time">Due in ${min}m ${sec}s &bull; Target: ${safeTarget}</div>
@@ -773,23 +881,29 @@
 
     // Add reminder form
     const remTaskInput = document.getElementById('rem-task-input');
+    const remTargetSelect = document.getElementById('rem-target-select');
     const remTimeSelect = document.getElementById('rem-time-select');
     const remAddBtn = document.getElementById('rem-add-btn');
     if (remAddBtn && remTaskInput) {
       remAddBtn.addEventListener('click', async () => {
-        if (!remTaskInput.value) return;
-        const task = remTaskInput.value;
+        if (!remTaskInput.value.trim()) return;
+        const task = remTaskInput.value.trim();
         const duration = parseFloat(remTimeSelect.value);
+        const selectedOpt = remTargetSelect ? remTargetSelect.options[remTargetSelect.selectedIndex] : null;
+        const targetPerson = remTargetSelect ? remTargetSelect.value : 'All Combined';
+        const channelsAttr = selectedOpt ? selectedOpt.getAttribute('data-channels') : 'all';
+        const channels = channelsAttr ? channelsAttr.split(',').map((c) => c.trim()) : ['all'];
+
         await apiFetch('/api/reminders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: task,
             duration_minutes: duration,
-            channels: ['tv', 'speaker', 'call', 'web'],
+            channels: channels,
             source: 'web_cockpit',
             created_by: 'Web Cockpit',
-            target_person: 'User'
+            target_person: targetPerson,
           })
         });
         remTaskInput.value = '';

@@ -83,12 +83,19 @@ export class AgendaDaemon {
   }
 
   private async dispatch(rem: Reminder): Promise<void> {
-    const recipient = sanitizeCallField(rem.target_person || process.env.PRIMARY_USER_NAME || 'Primary');
+    const rawTarget = sanitizeCallField(rem.target_person || process.env.PRIMARY_USER_NAME || 'Primary');
     const cleanTitle = sanitizeCallField(rem.title);
     const alertMessage = `Reminder: ${cleanTitle}`;
+    const channels = Array.isArray(rem.channels) ? rem.channels : ['all'];
+    const targetLower = rawTarget.toLowerCase();
+
+    const isAllGroup = targetLower.includes('all') || channels.includes('all');
+    const isSpeakersOnly =
+      targetLower.includes('speaker') ||
+      (channels.length === 1 && (channels[0] === 'speaker' || channels[0] === 'speakers' || channels[0] === 'aux'));
 
     // 1. Dispatch to LG TV if enabled (Toast notification on screen)
-    if (rem.channels.includes('tv') || rem.channels.includes('all')) {
+    if (channels.includes('tv') || isAllGroup) {
       try {
         await this.webOS.showToast(alertMessage);
       } catch (err) {
@@ -97,52 +104,64 @@ export class AgendaDaemon {
     }
 
     // 2. Dispatch to Whole-House VLC-Telnet Speakers via Home Assistant
-    if (rem.channels.includes('speaker') || rem.channels.includes('aux') || rem.channels.includes('all')) {
+    if (channels.includes('speaker') || channels.includes('speakers') || channels.includes('aux') || isAllGroup || isSpeakersOnly) {
       try {
+        const spokenTarget = isAllGroup ? 'everyone' : (isSpeakersOnly ? 'the household' : rawTarget);
         await this.haClient.callService('tts', 'speak', 'tts.google_translate_en_com', {
           media_player_entity_id: this.speakerEntityId,
-          message: `Attention ${recipient}, here is your reminder: ${cleanTitle}.`,
+          message: `Attention ${spokenTarget}, here is your reminder: ${cleanTitle}.`,
         });
       } catch (err) {
         console.error('Failed to dispatch reminder to whole-house speakers:', err);
       }
     }
 
-    // 3. Proactive Telephony Call: Call User's Phone to announce the reminder
-    if (rem.channels.includes('phone') || rem.channels.includes('call') || rem.channels.includes('all')) {
+    // 3. Proactive Telephony Call: Call User's Phone or Deskphone or Both
+    if (!isSpeakersOnly && (channels.includes('phone') || channels.includes('call') || isAllGroup)) {
       try {
         if (fs.existsSync(this.spoolDir)) {
-          const contact = resolveContact(recipient);
-          const targetExt = contact && SAFE_EXTENSION_RE.test(contact.extension) ? contact.extension : '1001';
-          const safeRecipientName = sanitizeCallField(contact ? contact.name : recipient);
+          const targets: Array<{ ext: string; name: string }> = [];
 
-          // MaxRetries: 0 ensures Asterisk places exactly 1 call and never retries
-          const callFileContent =
-            [
-              `Channel: PJSIP/${targetExt}`,
-              `CallerID: "Neptune Reminder" <7000>`,
-              `MaxRetries: 0`,
-              `WaitTime: 30`,
-              `Context: internal`,
-              `Extension: 7000`,
-              `Priority: 1`,
-              `Set: REMINDER_MSG=${cleanTitle}`,
-              `Set: OUTBOUND_TO=${safeRecipientName}`,
-            ].join('\n') + '\n';
-
-          const safeRemId = rem.id.replace(/[^a-zA-Z0-9_-]/g, '');
-          const tempCallFile = path.join(this.spoolDir, `.tmp_${safeRemId}.call`);
-          const finalCallFile = path.join(this.spoolDir, `rem_${safeRemId}.call`);
-          fs.writeFileSync(tempCallFile, callFileContent, 'utf-8');
-          try {
-            fs.chmodSync(tempCallFile, 0o666);
-          } catch {
-            // chmod may be a no-op on non-POSIX filesystems
+          if (isAllGroup) {
+            targets.push({ ext: '1001', name: 'Primary' });
+            targets.push({ ext: '1002', name: 'Desk' });
+          } else if (targetLower.includes('desk') || targetLower === '1002') {
+            targets.push({ ext: '1002', name: 'Desk' });
+          } else {
+            const contact = resolveContact(rawTarget);
+            const ext = contact && SAFE_EXTENSION_RE.test(contact.extension) ? contact.extension : '1001';
+            const name = contact ? contact.name : 'Primary';
+            targets.push({ ext, name });
           }
-          fs.renameSync(tempCallFile, finalCallFile);
-          console.log(
-            `[AgendaDaemon] Dispatched outbound call file to Asterisk for reminder: "${cleanTitle}" to Ext ${targetExt}`
-          );
+
+          for (const target of targets) {
+            const callFileContent =
+              [
+                `Channel: PJSIP/${target.ext}`,
+                `CallerID: "Neptune Reminder" <7000>`,
+                `MaxRetries: 0`,
+                `WaitTime: 30`,
+                `Context: internal`,
+                `Extension: 7000`,
+                `Priority: 1`,
+                `Set: REMINDER_MSG=${cleanTitle}`,
+                `Set: OUTBOUND_TO=${target.name}`,
+              ].join('\n') + '\n';
+
+            const safeRemId = rem.id.replace(/[^a-zA-Z0-9_-]/g, '');
+            const tempCallFile = path.join(this.spoolDir, `.tmp_${safeRemId}_${target.ext}.call`);
+            const finalCallFile = path.join(this.spoolDir, `rem_${safeRemId}_${target.ext}.call`);
+            fs.writeFileSync(tempCallFile, callFileContent, 'utf-8');
+            try {
+              fs.chmodSync(tempCallFile, 0o666);
+            } catch {
+              // chmod may be a no-op on non-POSIX filesystems
+            }
+            fs.renameSync(tempCallFile, finalCallFile);
+            console.log(
+              `[AgendaDaemon] Dispatched outbound call file to Asterisk for reminder: "${cleanTitle}" to Ext ${target.ext} (${target.name})`
+            );
+          }
         } else {
           console.warn(`[AgendaDaemon] Asterisk spool directory not mounted at ${this.spoolDir}`);
         }
