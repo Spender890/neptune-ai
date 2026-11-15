@@ -17,7 +17,7 @@
 | **CI Pipeline** | `.github/workflows/ci.yml` configured (`backend`, `python-and-shell`, `docker-build`) | **Ready** | Triggers on `push` / `pull_request` to `main` after repository push |
 | **Documentation & Templates** | `README.md`, `INSTALLATION.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, Issue/PR templates, audit reports | **Pass** | Reconciled with `v0.1.0` codebase; planned `v0.2.0` features labeled explicitly |
 | **Known Open Technical Debt** | Documented transparently (`TD-10` single-turn Asterisk spool filename, `TD-11` PTT browser upload stub) | **Documented** | See `TECHNICAL_DEBT.md` & `RELEASE_CHECKLIST` Known Limitations |
-| **Maintainer Action Before Tagging** | 1. Push topic branch and confirm green GitHub Actions CI run (`backend`, `python-and-shell`, `docker-build`)<br>2. Smoke-test `docker compose up -d --build` on Linux/Docker host | **Pending Maintainer** | Windows audit workstation verified Node/TypeScript/Python; live Docker daemon requires Linux host |
+| **Maintainer Action Before Tagging** | 1. Push topic branch and confirm green GitHub Actions CI run (`backend`, `python-and-shell`, `docker-build`)<br>2. Smoke-test `docker compose up -d --build` on Linux/Docker host | **Pass** | Live Debian Linux VM smoke test verified: all 6 containers started (`neptune-backend:0.1.0`, `neptune-asterisk:0.1.0`, `ollama:0.40.16`, `whisper:3.8.1`, `piper:1.6.2`, `caddy:2.8.4-alpine`); `/api/health` returned HTTP 200 with `version: "0.1.0"` |
 
 ---
 
