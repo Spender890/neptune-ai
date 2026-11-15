@@ -22,6 +22,7 @@ export class OllamaAgent {
   private model: string;
   private temperature: number;
   private contextWindow: number;
+  private timeoutMs: number;
 
   constructor(baseUrl: string, model: string = 'qwen2.5:3b') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
@@ -30,6 +31,8 @@ export class OllamaAgent {
     this.temperature = Number.isFinite(envTemp) ? envTemp : 0.2;
     const envCtx = parseInt(process.env.LLM_CONTEXT_WINDOW || '4096', 10);
     this.contextWindow = Number.isFinite(envCtx) && envCtx > 0 ? envCtx : 4096;
+    const envTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '45000', 10);
+    this.timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 45000;
   }
 
   public async evaluate(prompt: string, toolSchemas: unknown[] = []): Promise<LLMResponse> {
@@ -57,7 +60,7 @@ export class OllamaAgent {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
-      timeoutMs: 20000,
+      timeoutMs: this.timeoutMs,
     });
 
     const latency = Date.now() - startTime;
