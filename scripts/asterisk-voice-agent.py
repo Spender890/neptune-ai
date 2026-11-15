@@ -58,13 +58,15 @@ class StdlibWyomingClient:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
 
     async def write_raw_event(self, event_type, data=None, payload=b""):
+        data_bytes = b""
         header = {"type": event_type}
         if data:
-            header["data"] = data
+            data_bytes = json.dumps(data).encode("utf-8")
+            header["data_length"] = len(data_bytes)
         if payload:
             header["payload_length"] = len(payload)
         line = (json.dumps(header) + "\n").encode("utf-8")
-        self.writer.write(line + payload)
+        self.writer.write(line + data_bytes + (payload or b""))
         await self.writer.drain()
 
     async def read_raw_event(self):
@@ -72,11 +74,16 @@ class StdlibWyomingClient:
         if not line:
             return None
         header = json.loads(line.decode("utf-8").strip())
+        data = header.get("data") or {}
+        data_len = int(header.get("data_length", 0) or 0)
+        if data_len > 0:
+            data_bytes = await self.reader.readexactly(data_len)
+            data = json.loads(data_bytes.decode("utf-8"))
         payload_len = int(header.get("payload_length", 0) or 0)
         payload = b""
         if payload_len > 0:
             payload = await self.reader.readexactly(payload_len)
-        return WyomingEvent(header.get("type"), header.get("data"), payload)
+        return WyomingEvent(header.get("type"), data, payload)
 
     async def close(self):
         if self.writer:

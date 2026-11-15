@@ -91,12 +91,14 @@ class FakeAsyncWriter:
 
 
 def encode_wyoming_event(event_type, data=None, payload=b""):
+    data_bytes = b""
     header = {"type": event_type}
     if data:
-        header["data"] = data
+        data_bytes = json.dumps(data).encode("utf-8")
+        header["data_length"] = len(data_bytes)
     if payload:
         header["payload_length"] = len(payload)
-    return (json.dumps(header) + "\n").encode("utf-8") + payload
+    return (json.dumps(header) + "\n").encode("utf-8") + data_bytes + payload
 
 
 class TestWyomingVoicePipeline(unittest.TestCase):

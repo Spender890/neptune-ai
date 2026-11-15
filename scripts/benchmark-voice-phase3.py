@@ -47,6 +47,20 @@ def read_wyoming_event(sock):
     except Exception as e:
         return None, b""
 
+    data_len = int(header.get("data_length", 0) or 0)
+    if data_len > 0:
+        data_bytes = b""
+        while len(data_bytes) < data_len:
+            needed = data_len - len(data_bytes)
+            chunk = sock.recv(min(needed, 65536))
+            if not chunk:
+                break
+            data_bytes += chunk
+        try:
+            header["data"] = json.loads(data_bytes.decode("utf-8"))
+        except Exception:
+            pass
+
     payload_len = header.get("payload_length", 0)
     payload = b""
     while len(payload) < payload_len:
