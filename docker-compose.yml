@@ -158,14 +158,15 @@ services:
     image: neptune-asterisk:0.1.0
     container_name: neptune-asterisk
     restart: unless-stopped
-    # Starts as root to match host bind-mount spool permissions, then drops privileges via asterisk.conf (runuser=asterisk)
+    # Uses host networking on Linux to completely eliminate Docker NAT & one-way RTP audio bugs
+    network_mode: "host"
     user: root
     environment:
       - PRIMARY_USER_NAME=${PRIMARY_USER_NAME:-Primary}
       - NEPTUNE_API_KEY=${NEPTUNE_API_KEY:-}
-    ports:
-      - "5060:5060/udp"
-      - "10000-10050:10000-10050/udp"
+      - WHISPER_HOST=127.0.0.1
+      - PIPER_HOST=127.0.0.1
+      - BACKEND_URL=http://127.0.0.1:3000/api/command
     volumes:
       - ./asterisk/asterisk.conf:/etc/asterisk/asterisk.conf:ro
       - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
@@ -174,8 +175,6 @@ services:
       - ./scripts:/opt/neptune/scripts:ro
       - ./scripts:/var/lib/asterisk/agi-bin:ro
       - ./data/outgoing:/var/spool/asterisk/outgoing
-    networks:
-      - neptune-net
     depends_on:
       - neptune-backend
     healthcheck:

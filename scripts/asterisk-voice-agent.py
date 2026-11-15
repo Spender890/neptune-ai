@@ -27,11 +27,24 @@ try:
 except ImportError:
     HAS_WYOMING = False
 
-WHISPER_HOST = os.environ.get("WHISPER_HOST", "neptune-whisper")
+def _resolve_host(env_var, default_host):
+    val = os.environ.get(env_var)
+    if val:
+        return val
+    try:
+        import socket
+        socket.gethostbyname(default_host)
+        return default_host
+    except Exception:
+        return "127.0.0.1"
+
+
+WHISPER_HOST = _resolve_host("WHISPER_HOST", "neptune-whisper")
 WHISPER_PORT = int(os.environ.get("WHISPER_PORT", "10300"))
-PIPER_HOST = os.environ.get("PIPER_HOST", "neptune-piper")
+PIPER_HOST = _resolve_host("PIPER_HOST", "neptune-piper")
 PIPER_PORT = int(os.environ.get("PIPER_PORT", "10200"))
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://neptune-backend:3000/api/command")
+BACKEND_HOST = _resolve_host("BACKEND_HOST", "neptune-backend")
+BACKEND_URL = os.environ.get("BACKEND_URL", f"http://{BACKEND_HOST}:3000/api/command")
 NEPTUNE_API_KEY = os.environ.get("NEPTUNE_API_KEY", "")
 SPOOL_TMP_DIR = os.environ.get("ASTERISK_TMP_DIR", "/var/spool/asterisk/tmp")
 
