@@ -23,16 +23,19 @@ export class OllamaAgent {
   private temperature: number;
   private contextWindow: number;
   private timeoutMs: number;
+  private numThreads: number;
 
   constructor(baseUrl: string, model: string = 'qwen2.5:3b') {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
     this.model = model;
     const envTemp = parseFloat(process.env.LLM_TEMPERATURE || '0.2');
     this.temperature = Number.isFinite(envTemp) ? envTemp : 0.2;
-    const envCtx = parseInt(process.env.LLM_CONTEXT_WINDOW || '4096', 10);
-    this.contextWindow = Number.isFinite(envCtx) && envCtx > 0 ? envCtx : 4096;
+    const envCtx = parseInt(process.env.LLM_CONTEXT_WINDOW || '1024', 10);
+    this.contextWindow = Number.isFinite(envCtx) && envCtx > 0 ? envCtx : 1024;
     const envTimeout = parseInt(process.env.LLM_TIMEOUT_MS || '45000', 10);
     this.timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 45000;
+    const envThreads = parseInt(process.env.LLM_NUM_THREADS || '4', 10);
+    this.numThreads = Number.isFinite(envThreads) && envThreads > 0 ? envThreads : 4;
   }
 
   public async evaluate(prompt: string, toolSchemas: unknown[] = []): Promise<LLMResponse> {
@@ -50,8 +53,9 @@ export class OllamaAgent {
       stream: false,
       keep_alive: '24h',
       options: {
-        num_predict: 120,
+        num_predict: 60,
         num_ctx: this.contextWindow,
+        num_thread: this.numThreads,
         temperature: this.temperature,
       },
     });
