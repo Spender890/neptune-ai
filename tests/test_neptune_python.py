@@ -245,6 +245,22 @@ class TestAsteriskVoiceAgent(unittest.TestCase):
             fallback = agi_agent.query_backend("hello")
             self.assertIn("unable to reach", fallback.lower())
 
+    def test_transcribe_wav_filters_hallucinations_on_silence(self):
+        async def run_filter_test():
+            with mock.patch.object(agi_agent, "transcribe_pcm_frames", return_value="You"):
+                with mock.patch("os.path.getsize", return_value=16000), mock.patch("os.makedirs"), mock.patch("subprocess.run"):
+                    with mock.patch("wave.open") as mock_wave:
+                        mock_wf = mock.MagicMock()
+                        mock_wf.getframerate.return_value = 16000
+                        mock_wf.getsampwidth.return_value = 2
+                        mock_wf.getnchannels.return_value = 1
+                        mock_wf.readframes.return_value = b"\x00" * 3200
+                        mock_wave.return_value.__enter__.return_value = mock_wf
+                        result = await agi_agent.transcribe_wav("/fake/user_turn.wav")
+                        self.assertEqual(result, "")
+
+        run_sync_coro(run_filter_test())
+
 
 class TestRepositoryConfigAndSecurity(unittest.TestCase):
     def test_json_configs_are_valid(self):

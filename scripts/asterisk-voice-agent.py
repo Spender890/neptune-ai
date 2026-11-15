@@ -17,6 +17,16 @@ import sys
 import urllib.request
 import wave
 
+try:
+    from wyoming.asr import Transcribe, Transcript
+    from wyoming.audio import AudioChunk, AudioStart, AudioStop
+    from wyoming.client import AsyncTcpClient
+    from wyoming.tts import Synthesize
+
+    HAS_WYOMING = True
+except ImportError:
+    HAS_WYOMING = False
+
 WHISPER_HOST = os.environ.get("WHISPER_HOST", "neptune-whisper")
 WHISPER_PORT = int(os.environ.get("WHISPER_PORT", "10300"))
 PIPER_HOST = os.environ.get("PIPER_HOST", "neptune-piper")
@@ -70,19 +80,38 @@ class StdlibWyomingClient:
         await self.writer.drain()
 
     async def read_raw_event(self):
-        line = await self.reader.readline()
-        if not line:
-            return None
-        header = json.loads(line.decode("utf-8").strip())
+        while True:
+            line = await self.reader.readline()
+            if not line:
+                return None
+            line_str = line.decode("utf-8", errors="replace").strip()
+            if not line_str:
+                continue
+            try:
+                header = json.loads(line_str)
+                break
+            except Exception as e:
+                sys.stderr.write(f"[Wyoming Header Warning] '{line_str}': {e}\n")
+                continue
+
         data = header.get("data") or {}
         data_len = int(header.get("data_length", 0) or 0)
         if data_len > 0:
             data_bytes = await self.reader.readexactly(data_len)
-            data = json.loads(data_bytes.decode("utf-8"))
+            try:
+                extra_data = json.loads(data_bytes.decode("utf-8", errors="replace"))
+                if isinstance(extra_data, dict) and isinstance(data, dict):
+                    data.update(extra_data)
+                else:
+                    data = extra_data
+            except Exception as e:
+                sys.stderr.write(f"[Wyoming Data Warning] {e}\n")
+
         payload_len = int(header.get("payload_length", 0) or 0)
         payload = b""
         if payload_len > 0:
             payload = await self.reader.readexactly(payload_len)
+
         return WyomingEvent(header.get("type"), data, payload)
 
     async def close(self):
@@ -148,10 +177,15 @@ def is_hangup_intent(user_text):
 async def transcribe_wav(wav_path, whisper_host=WHISPER_HOST, whisper_port=WHISPER_PORT):
     try:
         os.makedirs(SPOOL_TMP_DIR, exist_ok=True)
-        sys.stderr.write(f"[STT] Transcribing: {wav_path} (size: {os.path.getsize(wav_path)} bytes)\n")
-        # Ensure 16kHz mono 16-bit PCM for Whisper
+        file_size = os.path.getsize(wav_path)
+        sys.stderr.write(f"[STT] Transcribing: {wav_path} (size: {file_size} bytes)\n")
+        # Ensure 16kHz mono 16-bit PCM for Whisper, suppress ALSA warnings from sox
         wav_16k = os.path.join(SPOOL_TMP_DIR, "whisper_16k.wav")
-        subprocess.run(["sox", wav_path, "-r", "16000", "-c", "1", "-b", "16", wav_16k], check=True)
+        subprocess.run(
+            ["sox", wav_path, "-r", "16000", "-c", "1", "-b", "16", wav_16k],
+            check=True,
+            stderr=subprocess.DEVNULL,
+        )
 
         with wave.open(wav_16k, "rb") as wf:
             rate = wf.getframerate()
@@ -159,7 +193,13 @@ async def transcribe_wav(wav_path, whisper_host=WHISPER_HOST, whisper_port=WHISP
             channels = wf.getnchannels()
             frames = wf.readframes(wf.getnframes())
 
-        return await transcribe_pcm_frames(frames, rate, width, channels, whisper_host, whisper_port)
+        text = await transcribe_pcm_frames(frames, rate, width, channels, whisper_host, whisper_port)
+        clean = text.lower().strip().rstrip(".?!,")
+        # Filter out common Faster-Whisper hallucinations on short ambient silence
+        if clean in {"you", "thank you", "thanks"}:
+            sys.stderr.write(f"[STT] Filtered hallucination on silence: '{text}'\n")
+            return ""
+        return text
     except Exception as e:
         sys.stderr.write(f"[STT Error] {e}\n")
     return ""
@@ -167,10 +207,35 @@ async def transcribe_wav(wav_path, whisper_host=WHISPER_HOST, whisper_port=WHISP
 
 async def transcribe_pcm_frames(frames, rate=16000, width=2, channels=1, whisper_host=WHISPER_HOST, whisper_port=WHISPER_PORT):
     """Streams raw PCM frames to Wyoming Whisper over TCP and returns recognized transcript text."""
+    if HAS_WYOMING:
+        client = AsyncTcpClient(whisper_host, whisper_port)
+        await client.connect()
+        try:
+            await client.write_event(Transcribe(language="en").event())
+            await client.write_event(AudioStart(rate=rate, width=width, channels=channels).event())
+            chunk_size = 2048
+            for i in range(0, len(frames), chunk_size):
+                chunk = frames[i : i + chunk_size]
+                await client.write_event(AudioChunk(audio=chunk, rate=rate, width=width, channels=channels).event())
+            await client.write_event(AudioStop().event())
+
+            while True:
+                event = await client.read_event()
+                if event is None:
+                    break
+                if Transcript.is_type(event.type):
+                    transcript = Transcript.from_event(event)
+                    text = str(transcript.text or "").strip()
+                    sys.stderr.write(f"[STT] Wyoming recognized: '{text}'\n")
+                    return text
+        finally:
+            await client.disconnect()
+        return ""
+
     client = StdlibWyomingClient(whisper_host, whisper_port)
     await client.connect()
     try:
-        await client.write_raw_event("transcribe")
+        await client.write_raw_event("transcribe", {"language": "en"})
         await client.write_raw_event("audio-start", {"rate": rate, "width": width, "channels": channels})
         chunk_size = 2048
         for i in range(0, len(frames), chunk_size):
@@ -193,6 +258,33 @@ async def transcribe_pcm_frames(frames, rate=16000, width=2, channels=1, whisper
 
 async def synthesize_pcm(text, piper_host=PIPER_HOST, piper_port=PIPER_PORT):
     """Requests TTS synthesis from Wyoming Piper over TCP and returns (audio_bytes, rate, width, channels)."""
+    if HAS_WYOMING:
+        audio_bytes = bytearray()
+        rate = 22050
+        width = 2
+        channels = 1
+        client = AsyncTcpClient(piper_host, piper_port)
+        await client.connect()
+        try:
+            await client.write_event(Synthesize(text=text).event())
+            while True:
+                event = await client.read_event()
+                if event is None:
+                    break
+                if AudioStart.is_type(event.type):
+                    start = AudioStart.from_event(event)
+                    rate = int(start.rate)
+                    width = int(start.width)
+                    channels = int(start.channels)
+                elif AudioChunk.is_type(event.type):
+                    chunk = AudioChunk.from_event(event)
+                    audio_bytes.extend(chunk.audio)
+                elif AudioStop.is_type(event.type):
+                    break
+        finally:
+            await client.disconnect()
+        return bytes(audio_bytes), rate, width, channels
+
     audio_bytes = bytearray()
     rate = 22050
     width = 2
@@ -235,9 +327,13 @@ async def synthesize_speech(text, output_base, piper_host=PIPER_HOST, piper_port
             wf.setframerate(rate)
             wf.writeframes(audio_bytes)
 
-        # Resample to 8000Hz mono 16-bit PCM for Asterisk phone channel
+        # Resample to 8000Hz mono 16-bit PCM for Asterisk phone channel, suppress ALSA warnings
         phone_wav = f"{output_base}.wav"
-        subprocess.run(["sox", piper_wav, "-r", "8000", "-c", "1", "-b", "16", phone_wav], check=True)
+        subprocess.run(
+            ["sox", piper_wav, "-r", "8000", "-c", "1", "-b", "16", phone_wav],
+            check=True,
+            stderr=subprocess.DEVNULL,
+        )
         return True
     except Exception as e:
         sys.stderr.write(f"[TTS Error] {e}\n")
@@ -246,6 +342,7 @@ async def synthesize_speech(text, output_base, piper_host=PIPER_HOST, piper_port
 
 def query_backend(text, caller_id="", caller_name="", backend_url=BACKEND_URL, api_key=NEPTUNE_API_KEY):
     try:
+        sys.stderr.write(f"[Backend] Querying {backend_url} with: '{text}' (timeout 30s)\n")
         req_data = json.dumps({
             "text": text,
             "caller_id": caller_id,
@@ -255,9 +352,11 @@ def query_backend(text, caller_id="", caller_name="", backend_url=BACKEND_URL, a
         if api_key:
             headers["X-API-Key"] = api_key
         req = urllib.request.Request(backend_url, data=req_data, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=30) as response:
             res = json.loads(response.read().decode("utf-8"))
-            return res.get("speech", "Command completed successfully.")
+            reply = res.get("speech", "Command completed successfully.")
+            sys.stderr.write(f"[Backend] Reply: '{reply}'\n")
+            return reply
     except Exception as e:
         sys.stderr.write(f"[Backend Error] {e}\n")
         return "I am currently unable to reach the Neptune AI backend."
@@ -315,12 +414,19 @@ def main():
     recorded_file = os.path.join(SPOOL_TMP_DIR, "user_turn.wav")
     user_text = ""
 
-    if os.path.exists(recorded_file) and os.path.getsize(recorded_file) > 2000:
-        user_text = asyncio.run(transcribe_wav(recorded_file))
+    if os.path.exists(recorded_file):
+        file_size = os.path.getsize(recorded_file)
+        sys.stderr.write(f"[Neptune-AI] Turn audio recorded: {recorded_file} ({file_size} bytes)\n")
+        if file_size > 2000:
+            user_text = asyncio.run(transcribe_wav(recorded_file))
         try:
             os.remove(recorded_file)
         except Exception:
             pass
+    else:
+        sys.stderr.write(f"[Neptune-AI] Turn audio file not found: {recorded_file}\n")
+
+    sys.stderr.write(f"[Neptune-AI] Caller {caller_name} ({caller_id}) user_text: '{user_text}'\n")
 
     if not user_text:
         reprompt_base = os.path.join(SPOOL_TMP_DIR, "reprompt")
