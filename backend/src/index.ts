@@ -140,30 +140,36 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
 
   fastify.post(
     '/api/intercom/ring',
-    async (request: FastifyRequest<{ Body: { source?: string } }>, reply: FastifyReply) => {
-      const res = await engine.handleDoorbellRing(request.body?.source);
+    async (request: FastifyRequest<{ Body: { door?: string; source?: string } }>, reply: FastifyReply) => {
+      const { door, source } = request.body || {};
+      const res = await engine.handleDoorbellRing(door || 'door1', source);
       return reply.status(res.statusCode).send(res.body);
     }
   );
 
-  fastify.post('/api/door/unlock', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const res = await engine.unlockDoor();
-    return reply.status(res.statusCode).send(res.body);
-  });
+  fastify.post(
+    '/api/door/unlock',
+    async (request: FastifyRequest<{ Body: { door?: string } }>, reply: FastifyReply) => {
+      const target = request.body?.door || 'door1';
+      const res = await engine.unlockDoor(target);
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
 
-  // Apple Watch / iOS Shortcuts 1-tap quick unlock
+  // Apple Watch / iOS Shortcuts 1-tap quick unlock (support ?door=1, ?door=2, or ?door=all)
   fastify.get(
     '/api/door/quick-unlock',
-    async (request: FastifyRequest<{ Querystring: { token?: string } }>, reply: FastifyReply) => {
+    async (request: FastifyRequest<{ Querystring: { token?: string; door?: string } }>, reply: FastifyReply) => {
       const queryToken = request.query?.token;
+      const doorParam = request.query?.door || 'door1';
       const expectedToken = engine.intercomManager.config.quickDoorToken;
       if (expectedToken && queryToken !== expectedToken) {
         return reply.status(403).send({ error: 'Forbidden: Invalid quick-unlock token.' });
       }
-      const res = await engine.unlockDoor();
+      const res = await engine.unlockDoor(doorParam);
       return reply.status(res.statusCode).send({
         status: res.statusCode === 200 ? 'success' : 'failed',
-        message: 'Front door unlocked successfully!',
+        message: 'Door unlock command dispatched!',
         details: res.body,
       });
     }

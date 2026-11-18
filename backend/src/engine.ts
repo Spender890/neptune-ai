@@ -141,10 +141,12 @@ export const TOOL_SCHEMAS = [
     type: 'function',
     function: {
       name: 'unlock_door',
-      description: 'Unlock or open the front door intercom relay / entrance door latch.',
+      description: 'Unlock or open the front door, gate, or both doors.',
       parameters: {
         type: 'object',
-        properties: {},
+        properties: {
+          target: { type: 'string', enum: ['door1', 'door2', 'all'], description: 'Which door to unlock: door1 (front), door2 (gate), or all' },
+        },
       },
     },
   },
@@ -344,13 +346,13 @@ export class NeptuneEngine {
     return this.intercomManager.getStatus();
   }
 
-  public async unlockDoor() {
-    const res = await this.intercomManager.unlockDoor();
+  public async unlockDoor(target: string = 'door1') {
+    const res = await this.intercomManager.unlockDoor(target);
     return { statusCode: res.success ? 200 : 500, body: res };
   }
 
-  public async handleDoorbellRing(source?: string) {
-    const res = await this.intercomManager.handleDoorbellRing(source);
+  public async handleDoorbellRing(door: string = 'door1', source?: string) {
+    const res = await this.intercomManager.handleDoorbellRing(door, source);
     return { statusCode: 200, body: res };
   }
 
@@ -535,7 +537,8 @@ export class NeptuneEngine {
 
       // 0. Intercom Door Relay Unlock
       if (fpResult.intent === 'intercom_unlock_door') {
-        const unlockRes = await this.intercomManager.unlockDoor();
+        const target = typeof fpResult.data?.target === 'string' ? fpResult.data.target : 'door1';
+        const unlockRes = await this.intercomManager.unlockDoor(target);
         return {
           statusCode: 200,
           body: {
@@ -779,7 +782,8 @@ export class NeptuneEngine {
         }
 
         if (fnName === 'unlock_door') {
-          const unlockRes = await this.intercomManager.unlockDoor();
+          const target = typeof args.target === 'string' ? args.target : 'door1';
+          const unlockRes = await this.intercomManager.unlockDoor(target);
           executedTools.push({ tool: fnName, success: unlockRes.success, speech: unlockRes.speech });
           continue;
         }

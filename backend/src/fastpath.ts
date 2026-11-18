@@ -92,18 +92,29 @@ export class FastPathRouter {
       };
     }
 
-    // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock the door", "open front door")
+    // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock front door", "open gate", "open both doors")
     const doorUnlockMatch = clean.match(
-      /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(?:front\s+)?door$/
+      /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(both\s+doors|all\s+doors|front\s+door|gate|side\s+door|back\s+door|door\s*1|door\s*2|door)$/
     );
     if (doorUnlockMatch) {
+      const rawTarget = doorUnlockMatch[1].trim();
+      let target = 'door1';
+      let speech = 'Opening the front door.';
+      if (rawTarget.includes('both') || rawTarget.includes('all')) {
+        target = 'all';
+        speech = 'Opening both doors.';
+      } else if (rawTarget.includes('gate') || rawTarget.includes('side') || rawTarget.includes('back') || rawTarget.includes('2')) {
+        target = 'door2';
+        speech = 'Opening the gate.';
+      }
       return {
         matched: true,
         intent: 'intercom_unlock_door',
         domain: 'intercom',
         service: 'unlock_door',
-        entity_id: 'intercom.front_door',
-        confirmation_speech: 'Opening the front door.',
+        entity_id: `intercom.${target}`,
+        data: { target },
+        confirmation_speech: speech,
         requires_confirmation: false,
       };
     }

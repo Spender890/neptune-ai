@@ -313,9 +313,11 @@ class TestRepositoryConfigAndSecurity(unittest.TestCase):
         self.assertIn("tv-power-btn", html_text)
         self.assertIn("tv-vol-slider", html_text)
 
-        # 3. Hikvision Intercom & Front Door
-        self.assertIn("door-unlock-btn", html_text)
+        # 3. Hikvision Intercom & Dual Door Stations
+        self.assertIn("door1-unlock-btn", html_text)
+        self.assertIn("door2-unlock-btn", html_text)
         self.assertIn("OPEN FRONT DOOR", html_text)
+        self.assertIn("OPEN GATE", html_text)
         self.assertIn("/api/door/quick-unlock", html_text)
         self.assertIn("doorTestRing", html_text)
         self.assertIn("door-ring-banner", html_text)
@@ -329,7 +331,9 @@ class TestRepositoryConfigAndSecurity(unittest.TestCase):
     def test_door_unlock_regex_and_backend_routes(self):
         fastpath_text = (REPO_ROOT / "backend/src/fastpath.ts").read_text(encoding="utf-8")
         self.assertIn("intercom_unlock_door", fastpath_text)
-        door_pattern = re.compile(r"^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(?:front\s+)?door$")
+        door_pattern = re.compile(
+            r"^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(both\s+doors|all\s+doors|front\s+door|gate|side\s+door|back\s+door|door\s*1|door\s*2|door)$"
+        )
         test_phrases = [
             "open the door",
             "unlock the door",
@@ -338,6 +342,12 @@ class TestRepositoryConfigAndSecurity(unittest.TestCase):
             "open door",
             "please open the door",
             "please unlock front door",
+            "open gate",
+            "unlock gate",
+            "open side door",
+            "open both doors",
+            "unlock both doors",
+            "open door 2",
         ]
         for phrase in test_phrases:
             self.assertTrue(door_pattern.match(phrase), f"Regex failed to match: '{phrase}'")

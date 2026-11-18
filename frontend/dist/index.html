@@ -566,46 +566,65 @@
       </div>
     </div>
 
-    <!-- Front Door & Hikvision Intercom Card -->
+    <!-- Front Door & Hikvision Intercom Card (Dual Station Support) -->
     <div class="card">
       <div class="card-title">
-        <span>Hikvision Intercom &amp; Door</span>
-        <span id="door-status-pill" class="tv-pill pill-playing">LOCKED</span>
+        <span>Hikvision Intercoms</span>
+        <div style="display: flex; gap: 0.35rem;">
+          <span id="door1-status-pill" class="tv-pill pill-playing" title="192.168.1.39">FRONT: LOCKED</span>
+          <span id="door2-status-pill" class="tv-pill pill-playing" title="192.168.1.40">GATE: LOCKED</span>
+        </div>
       </div>
 
       <!-- Live Doorbell Ring Alert (Hidden by default) -->
       <div id="door-ring-banner" class="ring-banner" style="display: none;">
         <div style="display: flex; align-items: center; gap: 0.5rem;">
           <span style="font-size: 1.3rem;">🔔</span>
-          <strong>DOORBELL RINGING: Someone is at the front door!</strong>
+          <strong id="door-ring-text">DOORBELL RINGING: Someone is at the door!</strong>
         </div>
-        <button class="btn-send" onclick="doorUnlock()" style="background: #10b981; color: white; padding: 0.35rem 0.75rem; font-size: 0.8rem;">Open Now</button>
+        <button class="btn-send" id="door-ring-open-btn" onclick="doorUnlock('all')" style="background: #10b981; color: white; padding: 0.35rem 0.75rem; font-size: 0.8rem;">Open Now</button>
       </div>
 
-      <!-- Prominent 1-Touch Unlock Button -->
-      <button class="door-unlock-btn" id="door-unlock-btn" onclick="doorUnlock()">
-        <span>🔓</span> OPEN FRONT DOOR
-      </button>
+      <!-- Dual Door Unlock Buttons -->
+      <div style="display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.85rem;">
+        <button class="door-unlock-btn" id="door1-unlock-btn" onclick="doorUnlock('door1')">
+          <span>🔓</span> OPEN FRONT DOOR (192.168.1.39)
+        </button>
+        <button class="door-unlock-btn" id="door2-unlock-btn" onclick="doorUnlock('door2')" style="background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%); box-shadow: 0 4px 20px rgba(14, 165, 233, 0.4);">
+          <span>🔓</span> OPEN GATE / DOOR 2 (192.168.1.40)
+        </button>
+        <button class="ctrl-btn" onclick="doorUnlock('all')" style="padding: 0.65rem; font-weight: 600; border-color: rgba(255,255,255,0.15);">
+          🔓 Open Both Doors Together
+        </button>
+      </div>
 
       <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-        <button class="ctrl-btn" onclick="doorTestRing()">🔔 Test Doorbell Ring</button>
-        <button class="ctrl-btn" onclick="fetchIntercomStatus()">🔄 Refresh Status</button>
+        <button class="ctrl-btn" onclick="doorTestRing('door1')">🔔 Ring Front Bell</button>
+        <button class="ctrl-btn" onclick="doorTestRing('door2')">🔔 Ring Gate Bell</button>
+        <button class="ctrl-btn" onclick="fetchIntercomStatus()">🔄 Refresh</button>
       </div>
 
       <!-- Apple Watch & Phone 1-Tap Shortcut Setup -->
       <div style="font-size: 0.82rem; color: var(--text-muted);">
         <strong>📱 Phone &amp; Apple Watch 1-Tap Setup:</strong>
         <p style="font-size: 0.75rem; margin-top: 0.2rem; color: #cbd5e1;">
-          Add to iOS Shortcuts with <em>"Get contents of URL"</em> to unlock the door in 1 tap from your watch or home screen widget:
+          Add to iOS Shortcuts with <em>"Get contents of URL"</em> to unlock your chosen door in 1 tap:
         </p>
       </div>
-      <div class="quick-link-box">
-        <span id="quick-unlock-url">/api/door/quick-unlock?token=neptune-open-door</span>
+      <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
+        <select id="quick-door-target" class="select-input" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.78rem;" onchange="updateQuickUnlockUrl()">
+          <option value="door1" selected>Front Door (192.168.1.39)</option>
+          <option value="door2">Gate / Door 2 (192.168.1.40)</option>
+          <option value="all">Both Doors Together</option>
+        </select>
         <button class="btn-send" id="copy-quick-link" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;">Copy Link</button>
+      </div>
+      <div class="quick-link-box">
+        <span id="quick-unlock-url">/api/door/quick-unlock?door=door1&token=neptune-open-door</span>
       </div>
 
       <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.85rem; border-top: 1px solid var(--card-border); padding-top: 0.5rem;">
-        👁️ <strong>Vision Detection:</strong> Intercom RTSP video stream architecture prepared for facial recognition model.
+        👁️ <strong>Vision Detection:</strong> Dual RTSP video stream architecture prepared for outdoor cameras.
       </div>
     </div>
 
@@ -865,9 +884,13 @@
     const btnRouteTv = document.getElementById('btn-route-tv');
 
     // Intercom & Door Elements
-    const doorStatusPill = document.getElementById('door-status-pill');
+    const door1StatusPill = document.getElementById('door1-status-pill');
+    const door2StatusPill = document.getElementById('door2-status-pill');
     const doorRingBanner = document.getElementById('door-ring-banner');
-    const doorUnlockBtn = document.getElementById('door-unlock-btn');
+    const doorRingText = document.getElementById('door-ring-text');
+    const door1UnlockBtn = document.getElementById('door1-unlock-btn');
+    const door2UnlockBtn = document.getElementById('door2-unlock-btn');
+    const quickDoorTarget = document.getElementById('quick-door-target');
     const quickUnlockUrlEl = document.getElementById('quick-unlock-url');
     const copyQuickLinkBtn = document.getElementById('copy-quick-link');
 
@@ -1136,32 +1159,57 @@
     }
 
     // ==========================================
-    // 3. HIKVISION INTERCOM & FRONT DOOR ACCESS
+    // 3. HIKVISION INTERCOM & FRONT DOOR ACCESS (DUAL STATIONS)
     // ==========================================
+    let cachedQuickToken = 'neptune-open-door';
+
+    function updateQuickUnlockUrl() {
+      const target = quickDoorTarget ? quickDoorTarget.value : 'door1';
+      const token = cachedQuickToken || 'neptune-open-door';
+      const fullQuickUrl = `${window.location.origin}/api/door/quick-unlock?door=${target}&token=${token}`;
+      if (quickUnlockUrlEl) {
+        quickUnlockUrlEl.textContent = fullQuickUrl;
+      }
+    }
+
     async function fetchIntercomStatus() {
       try {
         const res = await apiFetch('/api/intercom/status');
         const data = await res.json();
-        if (data) {
-          const isUnlocked = data.door_state === 'unlocked';
-          doorStatusPill.className = `tv-pill ${isUnlocked ? 'pill-paused' : 'pill-playing'}`;
-          doorStatusPill.textContent = isUnlocked ? 'UNLOCKED' : 'LOCKED';
-          doorUnlockBtn.classList.toggle('unlocked', isUnlocked);
-          doorUnlockBtn.innerHTML = isUnlocked ? '<span>✅</span> DOOR UNLOCKED' : '<span>🔓</span> OPEN FRONT DOOR';
+        if (data && Array.isArray(data.doors)) {
+          cachedQuickToken = data.quick_token || 'neptune-open-door';
+          updateQuickUnlockUrl();
 
-          // Update Quick-Unlock link
-          const token = data.quick_token || 'neptune-open-door';
-          const fullQuickUrl = `${window.location.origin}/api/door/quick-unlock?token=${token}`;
-          if (quickUnlockUrlEl) {
-            quickUnlockUrlEl.textContent = fullQuickUrl;
+          const d1 = data.doors.find(d => d.id === 'door1');
+          const d2 = data.doors.find(d => d.id === 'door2');
+
+          if (d1 && door1StatusPill) {
+            const isUn = d1.state === 'unlocked';
+            door1StatusPill.className = `tv-pill ${isUn ? 'pill-paused' : 'pill-playing'}`;
+            door1StatusPill.textContent = isUn ? 'FRONT: UNLOCKED' : 'FRONT: LOCKED';
+            if (door1UnlockBtn) {
+              door1UnlockBtn.classList.toggle('unlocked', isUn);
+              door1UnlockBtn.innerHTML = isUn ? '<span>✅</span> FRONT DOOR UNLOCKED' : '<span>🔓</span> OPEN FRONT DOOR (192.168.1.39)';
+            }
           }
 
-          // Check if there is a recent ring in last 10 seconds
+          if (d2 && door2StatusPill) {
+            const isUn = d2.state === 'unlocked';
+            door2StatusPill.className = `tv-pill ${isUn ? 'pill-paused' : 'pill-playing'}`;
+            door2StatusPill.textContent = isUn ? 'GATE: UNLOCKED' : 'GATE: LOCKED';
+            if (door2UnlockBtn) {
+              door2UnlockBtn.classList.toggle('unlocked', isUn);
+              door2UnlockBtn.innerHTML = isUn ? '<span>✅</span> GATE UNLOCKED' : '<span>🔓</span> OPEN GATE / DOOR 2 (192.168.1.40)';
+            }
+          }
+
+          // Check if there is a recent ring in last 15 seconds
           if (Array.isArray(data.recent_rings) && data.recent_rings.length > 0) {
             const last = data.recent_rings[data.recent_rings.length - 1];
             const ageSec = (Date.now() - last.timestamp) / 1000;
             if (ageSec < 15) {
               doorRingBanner.style.display = 'flex';
+              if (doorRingText) doorRingText.textContent = `🔔 DOORBELL: Someone is at the ${last.doorName || 'door'}!`;
             } else {
               doorRingBanner.style.display = 'none';
             }
@@ -1172,31 +1220,35 @@
       }
     }
 
-    async function doorUnlock() {
-      doorUnlockBtn.innerHTML = '<span>⏳</span> UNLOCKING...';
+    async function doorUnlock(target = 'door1') {
+      const btn = target === 'door2' ? door2UnlockBtn : door1UnlockBtn;
+      if (btn) btn.innerHTML = '<span>⏳</span> UNLOCKING...';
       try {
-        const res = await apiFetch('/api/door/unlock', { method: 'POST' });
+        const res = await apiFetch('/api/door/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ door: target })
+        });
         const data = await res.json();
-        doorUnlockBtn.innerHTML = '<span>✅</span> DOOR UNLOCKED!';
-        doorUnlockBtn.classList.add('unlocked');
-        resText.textContent = data.speech || "Front door unlocked!";
+        resText.textContent = data.speech || "Door unlocked!";
         doorRingBanner.style.display = 'none';
-        setTimeout(fetchIntercomStatus, 1000);
+        setTimeout(fetchIntercomStatus, 600);
       } catch (err) {
         alert("Failed to unlock door.");
         fetchIntercomStatus();
       }
     }
 
-    async function doorTestRing() {
-      resText.textContent = "Testing intercom doorbell ring...";
+    async function doorTestRing(target = 'door1') {
+      const doorName = target === 'door2' ? 'Gate' : 'Front Door';
+      resText.textContent = `Testing ${doorName} doorbell ring...`;
       await apiFetch('/api/intercom/ring', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source: 'Cockpit Test' })
+        body: JSON.stringify({ door: target, source: 'Cockpit Test' })
       });
       doorRingBanner.style.display = 'flex';
-      setTimeout(fetchIntercomStatus, 500);
+      setTimeout(fetchIntercomStatus, 400);
     }
 
     if (copyQuickLinkBtn) {
