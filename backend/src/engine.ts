@@ -9,7 +9,9 @@ import { LGWebOSManager } from './webos';
 import { ReminderStore, type Reminder } from './reminders';
 import { AgendaDaemon } from './agenda';
 import { TelephonyManager } from './telephony';
-import { CONTACT_DIRECTORY, getContactByExtension } from './contacts';
+import { CONTACT_DIRECTORY, getContactByExtension, addContact, removeContact, reloadContacts } from './contacts';
+import { IntercomManager, type DoorUnlockResult } from './intercom';
+import { synthesizeSpeechWyoming, transcribeAudioWyoming } from './speech';
 
 export interface NeptuneConfig {
   port: number;
@@ -40,6 +42,7 @@ export interface NeptuneDependencies {
   reminderStore?: ReminderStore;
   agendaDaemon?: AgendaDaemon;
   telephonyManager?: TelephonyManager;
+  intercomManager?: IntercomManager;
 }
 
 export const VALID_SOUND_OUTPUTS = [
@@ -134,6 +137,16 @@ export const TOOL_SCHEMAS = [
         required: ['action', 'target_player'],
       },
     },
+  {
+    type: 'function',
+    function: {
+      name: 'unlock_door',
+      description: 'Unlock or open the front door intercom relay / entrance door latch.',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
   },
 ];
 
@@ -193,6 +206,7 @@ export class NeptuneEngine {
   public readonly reminderStore: ReminderStore;
   public readonly agendaDaemon: AgendaDaemon;
   public readonly telephonyManager: TelephonyManager;
+  public readonly intercomManager: IntercomManager;
 
   constructor(deps: NeptuneDependencies = {}) {
     this.config = loadConfigFromEnv(deps.config);
@@ -207,6 +221,9 @@ export class NeptuneEngine {
       deps.agendaDaemon ||
       new AgendaDaemon(this.reminderStore, this.webOSManager, this.haClient, this.config.speakerEntity, this.config.spoolDir);
     this.telephonyManager = deps.telephonyManager || new TelephonyManager(this.config.spoolDir);
+    this.intercomManager =
+      deps.intercomManager ||
+      new IntercomManager({}, this.haClient, this.webOSManager, this.telephonyManager, this.config.speakerEntity);
   }
 
   public getHealth(): Record<string, unknown> {
@@ -259,6 +276,145 @@ export class NeptuneEngine {
     }
     const result = await this.webOSManager.selectSoundOutput(soundOutput);
     return { statusCode: 200, body: result };
+  }
+
+  public async setTVPower(action: 'on' | 'off' | 'toggle') {
+    let res;
+    if (action === 'on') {
+      res = await this.webOSManager.powerOn();
+    } else if (action === 'off') {
+      res = await this.webOSManager.powerOff();
+    } else {
+      res = await this.webOSManager.togglePower();
+    }
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async setTVSource(source: string) {
+    if (!source || typeof source !== 'string') {
+      return { statusCode: 400, body: { error: 'Source parameter is required.' } };
+    }
+    const res = await this.webOSManager.launchAppOrSource(source);
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async setTVVolume(action: 'up' | 'down' | 'mute' | 'set', level?: number) {
+    let res;
+    if (action === 'up') {
+      res = await this.webOSManager.volumeUp();
+    } else if (action === 'down') {
+      res = await this.webOSManager.volumeDown();
+    } else if (action === 'mute') {
+      res = await this.webOSManager.setMute();
+    } else {
+      const vol = typeof level === 'number' && Number.isFinite(level) ? level : 25;
+      res = await this.webOSManager.setVolume(vol);
+    }
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async launchTVApp(app: string) {
+    if (!app || typeof app !== 'string') {
+      return { statusCode: 400, body: { error: 'App name is required.' } };
+    }
+    const res = await this.webOSManager.launchAppOrSource(app);
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public addContact(data: { name: string; extension: string; role?: string; aliases?: string[] }) {
+    if (!data || !data.name || !data.extension) {
+      return { statusCode: 400, body: { error: 'Name and extension are required.' } };
+    }
+    const created = addContact(data);
+    return { statusCode: 201, body: { success: true, contact: created } };
+  }
+
+  public deleteContact(id: string) {
+    if (!id || typeof id !== 'string') {
+      return { statusCode: 400, body: { error: 'Contact ID or extension is required.' } };
+    }
+    const removed = removeContact(id);
+    if (!removed) {
+      return { statusCode: 404, body: { error: 'Contact not found or cannot remove protected operator.' } };
+    }
+    return { statusCode: 200, body: { success: true, id } };
+  }
+
+  public getIntercomStatus() {
+    return this.intercomManager.getStatus();
+  }
+
+  public async unlockDoor() {
+    const res = await this.intercomManager.unlockDoor();
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async handleDoorbellRing(source?: string) {
+    const res = await this.intercomManager.handleDoorbellRing(source);
+    return { statusCode: 200, body: res };
+  }
+
+  public async handleVoiceInteract(audioBase64?: string, text?: string): Promise<{
+    statusCode: number;
+    body: {
+      speech: string;
+      transcription: string;
+      audio?: string;
+      latency_ms: number;
+      error?: string;
+    };
+  }> {
+    const start = Date.now();
+    let transcript = text || '';
+
+    if (audioBase64 && !transcript) {
+      try {
+        const buf = Buffer.from(audioBase64, 'base64');
+        transcript = await transcribeAudioWyoming(buf);
+      } catch (err) {
+        console.error('Wyoming Whisper STT error:', err);
+      }
+    }
+
+    if (!transcript) {
+      return {
+        statusCode: 400,
+        body: {
+          speech: 'I could not hear any speech. Please try speaking again.',
+          transcription: '',
+          latency_ms: Date.now() - start,
+          error: 'No audio detected or transcription failed',
+        },
+      };
+    }
+
+    const cmdRes = await this.handleCommand({
+      text: transcript,
+      caller_id: 'browser_cockpit',
+      caller_name: 'Cockpit Voice',
+    });
+
+    const bodyObj = cmdRes.body as Record<string, unknown>;
+    const replySpeech = typeof bodyObj.speech === 'string' ? bodyObj.speech : 'Command processed.';
+    let audioOutput = '';
+    try {
+      const wavBuf = await synthesizeSpeechWyoming(replySpeech);
+      if (wavBuf && wavBuf.length > 44) {
+        audioOutput = wavBuf.toString('base64');
+      }
+    } catch (err) {
+      console.error('Wyoming Piper TTS error:', err);
+    }
+
+    return {
+      statusCode: 200,
+      body: {
+        speech: replySpeech,
+        transcription: transcript,
+        audio: audioOutput || undefined,
+        latency_ms: Date.now() - start,
+      },
+    };
   }
 
   public async placeOutboundCall(to: string, message: string, from?: string) {
@@ -373,6 +529,21 @@ export class NeptuneEngine {
             requires_confirmation: true,
             success: false,
             action: fpResult,
+          },
+        };
+      }
+
+      // 0. Intercom Door Relay Unlock
+      if (fpResult.intent === 'intercom_unlock_door') {
+        const unlockRes = await this.intercomManager.unlockDoor();
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-door-unlock',
+            latency_ms: Date.now() - startTime,
+            speech: unlockRes.speech,
+            success: unlockRes.success,
+            door_action: unlockRes,
           },
         };
       }
@@ -604,6 +775,12 @@ export class NeptuneEngine {
             senderName: callerName || this.config.primaryUserName,
           });
           executedTools.push({ tool: fnName, success: callRes.success, speech: callRes.speech });
+          continue;
+        }
+
+        if (fnName === 'unlock_door') {
+          const unlockRes = await this.intercomManager.unlockDoor();
+          executedTools.push({ tool: fnName, success: unlockRes.success, speech: unlockRes.speech });
           continue;
         }
 

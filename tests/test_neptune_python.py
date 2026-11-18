@@ -295,6 +295,68 @@ class TestRepositoryConfigAndSecurity(unittest.TestCase):
         self.assertNotIn("QNED806QA", html_text)
         self.assertNotIn("WD Sentinel Jellyfin", html_text)
 
+    def test_frontend_new_features_suite(self):
+        html_text = (REPO_ROOT / "frontend/dist/index.html").read_text(encoding="utf-8")
+        # 1. Web Voice / In-Browser Mic
+        self.assertIn("MediaRecorder", html_text)
+        self.assertIn("/api/voice/interact", html_text)
+        self.assertIn("startVoiceRecording", html_text)
+
+        # 2. TV Source Grid - ONLY HDMI 1..4, Live TV, YouTube, Jellyfin
+        sources = ["HDMI 1", "HDMI 2", "HDMI 3", "HDMI 4", "Live TV", "YouTube", "Jellyfin"]
+        for s in sources:
+            self.assertIn(f"tvSetSource('{s}')", html_text)
+        # Custom App Launcher
+        self.assertIn("custom-app-input", html_text)
+        self.assertIn("tvLaunchCustomApp", html_text)
+        # Power & Volume
+        self.assertIn("tv-power-btn", html_text)
+        self.assertIn("tv-vol-slider", html_text)
+
+        # 3. Hikvision Intercom & Front Door
+        self.assertIn("door-unlock-btn", html_text)
+        self.assertIn("OPEN FRONT DOOR", html_text)
+        self.assertIn("/api/door/quick-unlock", html_text)
+        self.assertIn("doorTestRing", html_text)
+        self.assertIn("door-ring-banner", html_text)
+
+        # 4. Dynamic Contacts
+        self.assertIn("contacts-container", html_text)
+        self.assertIn("submitAddContact", html_text)
+        self.assertIn("deleteContact", html_text)
+        self.assertIn("/api/contacts", html_text)
+
+    def test_door_unlock_regex_and_backend_routes(self):
+        fastpath_text = (REPO_ROOT / "backend/src/fastpath.ts").read_text(encoding="utf-8")
+        self.assertIn("intercom_unlock_door", fastpath_text)
+        door_pattern = re.compile(r"^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(?:front\s+)?door$")
+        test_phrases = [
+            "open the door",
+            "unlock the door",
+            "open front door",
+            "unlock front door",
+            "open door",
+            "please open the door",
+            "please unlock front door",
+        ]
+        for phrase in test_phrases:
+            self.assertTrue(door_pattern.match(phrase), f"Regex failed to match: '{phrase}'")
+
+        index_text = (REPO_ROOT / "backend/src/index.ts").read_text(encoding="utf-8")
+        expected_endpoints = [
+            "/api/tv/power",
+            "/api/tv/source",
+            "/api/tv/volume",
+            "/api/tv/app",
+            "/api/door/unlock",
+            "/api/door/quick-unlock",
+            "/api/intercom/ring",
+            "/api/contacts",
+            "/api/voice/interact",
+        ]
+        for ep in expected_endpoints:
+            self.assertIn(ep, index_text, f"Missing expected route {ep} in index.ts")
+
     def test_no_real_secrets_in_tracked_templates(self):
         env_text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
         self.assertIn("your_ha_long_lived_access_token_here", env_text)

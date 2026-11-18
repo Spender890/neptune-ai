@@ -61,13 +61,14 @@ export class LGWebOSManager {
       'ps4': 'PS4 Game Console',
       'ps4 game console': 'PS4 Game Console',
       'playstation': 'PS4 Game Console',
+      'hdmi 1': 'HDMI 1',
+      'hdmi1': 'HDMI 1',
       'hdmi 2': 'HDMI 2',
       'hdmi2': 'HDMI 2',
       'hdmi 3': 'HDMI 3',
       'hdmi3': 'HDMI 3',
       'hdmi 4': 'HDMI 4',
       'hdmi4': 'HDMI 4',
-      'hdmi 1': 'HDMI 2',
     };
     return map[clean] || input;
   }
@@ -123,6 +124,34 @@ export class LGWebOSManager {
       success: res.success,
       action: 'volume_up',
       speech: 'Turned up the TV volume.',
+      details: res.message,
+    };
+  }
+
+  /**
+   * Toggle TV power (turns on if off, turns off if on).
+   */
+  public async togglePower(): Promise<TVActionResult> {
+    const state = await this.getPlaybackState();
+    if (state.power === 'off') {
+      return this.powerOn();
+    } else {
+      return this.powerOff();
+    }
+  }
+
+  /**
+   * Set mute or toggle mute on TV.
+   */
+  public async setMute(mute?: boolean): Promise<TVActionResult> {
+    const targetMute = mute ?? true;
+    const res = await this.haClient.callService('media_player', 'volume_mute', this.tvEntityId, {
+      is_volume_muted: targetMute,
+    });
+    return {
+      success: res.success,
+      action: 'mute',
+      speech: targetMute ? 'Muted the TV volume.' : 'Unmuted the TV volume.',
       details: res.message,
     };
   }

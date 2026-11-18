@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Neptune-AI — Cockpit & Voice Gateway</title>
+  <title>Neptune-AI — Cockpit, TV &amp; Intercom Gateway</title>
   <style>
     :root {
       --bg: #070b12;
@@ -60,7 +60,7 @@
     }
     .dashboard {
       width: 100%;
-      max-width: 900px;
+      max-width: 960px;
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1.5rem;
@@ -114,6 +114,7 @@
     }
     .mic-button.recording {
       border-color: var(--danger);
+      background: radial-gradient(circle, rgba(239,68,68,0.3) 0%, rgba(15,23,42,0.85) 75%);
       box-shadow: 0 0 35px rgba(239, 68, 68, 0.7);
       animation: pulse 1.5s infinite;
     }
@@ -182,7 +183,7 @@
       background: rgba(255,255,255,0.06);
       color: var(--accent);
     }
-    /* TV Status Banner */
+    /* TV Status & Source Controls */
     .tv-status-banner {
       background: rgba(0,0,0,0.4);
       border: 1px solid var(--card-border);
@@ -210,8 +211,167 @@
     .pill-paused { background: rgba(245, 158, 11, 0.2); color: var(--warning); border: 1px solid var(--warning); }
     .pill-idle { background: rgba(0, 210, 255, 0.2); color: var(--accent); border: 1px solid var(--accent); }
     .pill-off { background: rgba(255, 255, 255, 0.1); color: var(--text-muted); border: 1px solid var(--card-border); }
-    
-    /* Chips and Quick Controls */
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(95px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+      margin-bottom: 0.85rem;
+    }
+    .btn-source {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 0.65rem 0.4rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    .btn-source:hover {
+      background: rgba(0, 210, 255, 0.2);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .btn-source.active-source {
+      background: rgba(0, 210, 255, 0.25);
+      border-color: var(--accent);
+      color: var(--accent);
+      box-shadow: 0 0 10px rgba(0, 210, 255, 0.3);
+    }
+    .btn-power {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+      border-radius: 8px;
+      padding: 0.4rem 0.85rem;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .btn-power:hover {
+      background: rgba(239, 68, 68, 0.3);
+      color: #fff;
+    }
+    .btn-power.is-on {
+      background: rgba(16, 185, 129, 0.2);
+      border-color: rgba(16, 185, 129, 0.5);
+      color: #34d399;
+    }
+    .vol-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+    .vol-slider {
+      flex: 1;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Door Access & Intercom */
+    .door-unlock-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 1.1rem;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    .door-unlock-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 25px rgba(16, 185, 129, 0.6);
+    }
+    .door-unlock-btn:active {
+      transform: scale(0.98);
+    }
+    .door-unlock-btn.unlocked {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      box-shadow: 0 4px 20px rgba(245, 158, 11, 0.5);
+    }
+    .ring-banner {
+      background: rgba(239, 68, 68, 0.25);
+      border: 1px solid var(--danger);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      animation: alertPulse 1.2s infinite;
+    }
+    @keyframes alertPulse {
+      0% { opacity: 0.8; }
+      50% { opacity: 1; transform: scale(1.01); }
+      100% { opacity: 0.8; }
+    }
+    .quick-link-box {
+      background: rgba(0,0,0,0.5);
+      border: 1px dashed var(--card-border);
+      border-radius: 8px;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.78rem;
+      font-family: monospace;
+      color: var(--accent);
+      word-break: break-all;
+      margin-top: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    /* Contacts Directory */
+    .contacts-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .contact-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.65rem 0.85rem;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      font-size: 0.88rem;
+    }
+    .contact-badge {
+      font-family: monospace;
+      font-weight: 700;
+      color: var(--accent);
+      background: rgba(0, 210, 255, 0.1);
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      border: 1px solid var(--border-accent);
+      font-size: 0.8rem;
+      margin-right: 0.5rem;
+    }
+
+    /* Chips and Controls */
     .chip-container {
       display: flex;
       flex-wrap: wrap;
@@ -263,6 +423,7 @@
       color: var(--accent);
       font-weight: 700;
     }
+
     /* Reminders Card */
     .reminders-list {
       display: flex;
@@ -324,7 +485,7 @@
       white-space: nowrap;
     }
     .rem-tab:hover {
-      color: var(--text-main);
+      color: var(--text);
       background: rgba(255, 255, 255, 0.1);
     }
     .rem-tab.active {
@@ -375,25 +536,27 @@
 </head>
 <body>
   <div class="header">
-    <div class="badge">Phase 7 Operational &bull; Multi-Person Voice & Entertainment</div>
+    <div class="badge">Phase 7 Operational &bull; Smart Home, TV &amp; Intercom Gateway</div>
     <h1>Neptune-AI</h1>
     <div class="subtitle">Self-Hosted Neural Home Assistant &bull; Proxmox VM 101</div>
   </div>
 
   <div class="dashboard">
-    <!-- PTT & Interactive Command Center -->
+    <!-- PTT & Interactive Web Voice Assistant -->
     <div class="card interaction-panel">
-      <div class="mic-button" id="ptt-btn" title="Click to Talk / Type Below">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <div class="mic-button" id="ptt-btn" title="Tap to Speak with Neptune (Browser Audio)">
+        <svg id="mic-icon" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#00d2ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
           <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
           <line x1="12" y1="19" x2="12" y2="22"></line>
         </svg>
       </div>
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;" id="mic-status">Click to speak or use text command</div>
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-align: center;" id="mic-status">
+        Tap microphone to speak or type command below
+      </div>
 
       <div class="input-box">
-        <input type="text" id="cmd-input" class="text-input" style="flex: 1;" placeholder='e.g., "what is playing on tv", "route tv audio through home speakers", "call desk and tell them dinner is ready"' />
+        <input type="text" id="cmd-input" class="text-input" style="flex: 1;" placeholder='e.g., "open front door", "turn on tv", "switch to HDMI 2", "call desk"' />
         <button class="btn-send" id="cmd-send">Send</button>
       </div>
 
@@ -403,17 +566,64 @@
       </div>
     </div>
 
-    <!-- LG webOS TV & Audio Routing Card -->
+    <!-- Front Door & Hikvision Intercom Card -->
     <div class="card">
       <div class="card-title">
-        <span>LG webOS TV &amp; Media</span>
-        <span class="latency-tag" id="tv-power-tag">webOS TV</span>
+        <span>Hikvision Intercom &amp; Door</span>
+        <span id="door-status-pill" class="tv-pill pill-playing">LOCKED</span>
+      </div>
+
+      <!-- Live Doorbell Ring Alert (Hidden by default) -->
+      <div id="door-ring-banner" class="ring-banner" style="display: none;">
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <span style="font-size: 1.3rem;">🔔</span>
+          <strong>DOORBELL RINGING: Someone is at the front door!</strong>
+        </div>
+        <button class="btn-send" onclick="doorUnlock()" style="background: #10b981; color: white; padding: 0.35rem 0.75rem; font-size: 0.8rem;">Open Now</button>
+      </div>
+
+      <!-- Prominent 1-Touch Unlock Button -->
+      <button class="door-unlock-btn" id="door-unlock-btn" onclick="doorUnlock()">
+        <span>🔓</span> OPEN FRONT DOOR
+      </button>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <button class="ctrl-btn" onclick="doorTestRing()">🔔 Test Doorbell Ring</button>
+        <button class="ctrl-btn" onclick="fetchIntercomStatus()">🔄 Refresh Status</button>
+      </div>
+
+      <!-- Apple Watch & Phone 1-Tap Shortcut Setup -->
+      <div style="font-size: 0.82rem; color: var(--text-muted);">
+        <strong>📱 Phone &amp; Apple Watch 1-Tap Setup:</strong>
+        <p style="font-size: 0.75rem; margin-top: 0.2rem; color: #cbd5e1;">
+          Add to iOS Shortcuts with <em>"Get contents of URL"</em> to unlock the door in 1 tap from your watch or home screen widget:
+        </p>
+      </div>
+      <div class="quick-link-box">
+        <span id="quick-unlock-url">/api/door/quick-unlock?token=neptune-open-door</span>
+        <button class="btn-send" id="copy-quick-link" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;">Copy Link</button>
+      </div>
+
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.85rem; border-top: 1px solid var(--card-border); padding-top: 0.5rem;">
+        👁️ <strong>Vision Detection:</strong> Intercom RTSP video stream architecture prepared for facial recognition model.
+      </div>
+    </div>
+
+    <!-- LG webOS TV Complete Dashboard -->
+    <div class="card">
+      <div class="card-title">
+        <span>LG webOS TV Control</span>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <button class="btn-power" id="tv-power-btn" onclick="tvPowerToggle()">
+            ⏻ <span id="tv-power-btn-text">Power Toggle</span>
+          </button>
+        </div>
       </div>
 
       <!-- Live TV Playback & Output Status -->
       <div class="tv-status-banner">
         <div class="tv-status-row">
-          <span style="color: var(--text-muted);">Status &amp; App:</span>
+          <span style="color: var(--text-muted);">Status &amp; Source:</span>
           <div>
             <span id="tv-status-pill" class="tv-pill pill-off">STANDBY</span>
             <span id="tv-source-text" style="font-weight: 600; margin-left: 0.4rem;">Live TV</span>
@@ -429,45 +639,79 @@
         </div>
       </div>
 
+      <!-- Discrete Input Sources Grid: ONLY HDMI 1-4, Live TV, YouTube, Jellyfin -->
+      <div style="font-size: 0.8rem; color: var(--text-muted);">Select TV Source:</div>
+      <div class="source-grid">
+        <button class="btn-source" onclick="tvSetSource('HDMI 1')">HDMI 1</button>
+        <button class="btn-source" onclick="tvSetSource('HDMI 2')">HDMI 2</button>
+        <button class="btn-source" onclick="tvSetSource('HDMI 3')">HDMI 3</button>
+        <button class="btn-source" onclick="tvSetSource('HDMI 4')">HDMI 4</button>
+        <button class="btn-source" onclick="tvSetSource('Live TV')">Live TV</button>
+        <button class="btn-source" onclick="tvSetSource('YouTube')">YouTube</button>
+        <button class="btn-source" onclick="tvSetSource('Jellyfin')">Jellyfin</button>
+      </div>
+
+      <!-- Launch Any Custom App -->
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">Launch Any Custom App:</div>
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.85rem;">
+        <input type="text" id="custom-app-input" class="text-input" style="flex: 1;" placeholder='e.g., "Netflix", "Disney+", "Twitch", "Apple TV"' />
+        <button class="btn-send" onclick="tvLaunchCustomApp()" style="padding: 0 1rem;">Launch</button>
+      </div>
+
+      <!-- TV Volume Suite & Mute -->
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">Volume &amp; Audio:</div>
+      <div class="vol-row">
+        <button class="ctrl-btn" style="flex: 0 0 45px;" onclick="tvSetVolume('down')">&#128265; -</button>
+        <input type="range" id="tv-vol-slider" class="vol-slider" min="0" max="100" value="30" onchange="tvSetVolume('set', this.value)" />
+        <span id="tv-vol-val" style="font-family: monospace; font-size: 0.8rem; min-width: 32px;">30%</span>
+        <button class="ctrl-btn" style="flex: 0 0 45px;" onclick="tvSetVolume('up')">&#128266; +</button>
+        <button class="ctrl-btn" id="tv-mute-btn" style="flex: 0 0 75px;" onclick="tvSetVolume('mute')">Mute</button>
+      </div>
+
       <!-- TV Audio Speaker Routing -->
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">TV Audio Routing:</div>
-      <div class="btn-group" style="margin-top: 0; margin-bottom: 0.85rem;">
-        <button class="ctrl-btn" id="btn-route-speakers" onclick="sendCommand('route tv audio through home speakers')">&#128266; Whole-House Speakers (ARC)</button>
+      <div class="btn-group" style="margin-top: 0.75rem;">
+        <button class="ctrl-btn" id="btn-route-speakers" onclick="sendCommand('route tv audio through home speakers')">&#128266; House Speakers (ARC)</button>
         <button class="ctrl-btn" id="btn-route-tv" onclick="sendCommand('switch tv audio back to tv speakers')">&#128250; TV Internal Speakers</button>
       </div>
 
-      <!-- Playback Controls -->
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">Playback &amp; Volume:</div>
-      <div class="btn-group" style="margin-top: 0;">
-        <button class="ctrl-btn" onclick="sendCommand('pause tv')">&#10074;&#10074; Pause</button>
-        <button class="ctrl-btn" onclick="sendCommand('resume tv')">&#9658; Resume</button>
-        <button class="ctrl-btn" onclick="sendCommand('lower the volume')">&#128265; Vol -</button>
-        <button class="ctrl-btn" onclick="sendCommand('raise the volume')">&#128266; Vol +</button>
-        <button class="ctrl-btn" onclick="sendCommand('what is playing on tv')">&#8505; Status</button>
-      </div>
-
+      <!-- Play Movie from Jellyfin -->
       <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.85rem; margin-bottom: 0.35rem;">Play Movie from Jellyfin:</div>
       <div style="display: flex; gap: 0.5rem;">
         <input type="text" id="movie-input" class="text-input" style="flex: 1;" placeholder='e.g., "Zootopia", "Interstellar"' />
         <button class="btn-send" id="movie-send" style="padding: 0 1rem;">Play</button>
       </div>
+    </div>
 
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.85rem;">Quick Apps:</div>
-      <div class="chip-container">
-        <div class="chip" onclick="sendCommand('launch jellyfin on tv')">Jellyfin</div>
-        <div class="chip" onclick="sendCommand('launch youtube on tv')">YouTube</div>
-        <div class="chip" onclick="sendCommand('launch netflix on tv')">Netflix</div>
-        <div class="chip" onclick="sendCommand('launch apple tv on tv')">Apple TV</div>
-        <div class="chip" onclick="sendCommand('switch source to HDMI 2')">HDMI 2</div>
-        <div class="chip" onclick="sendCommand('switch source to Live TV')">Live TV</div>
+    <!-- Dynamic Contacts & Phone Extensions -->
+    <div class="card">
+      <div class="card-title">
+        <span>Contacts &amp; Phone Directory</span>
+        <span id="contacts-count" class="latency-tag">0 Contacts</span>
+      </div>
+
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.4rem;">Add Family Member or Extension:</div>
+      <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.85rem;">
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="contact-name-input" class="text-input" style="flex: 1;" placeholder="Name (e.g. Sarah)" />
+          <input type="text" id="contact-ext-input" class="text-input" style="width: 100px;" placeholder="Ext (e.g. 1003)" />
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="contact-role-input" class="text-input" style="flex: 1;" placeholder="Role/Device (e.g. Bedroom Tablet)" />
+          <button class="btn-send" id="contact-add-btn" onclick="submitAddContact()" style="padding: 0 1rem; background: #00d2ff; color: #040810;">+ Add</button>
+        </div>
+      </div>
+
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.35rem;">Active Extensions (Hot-Reloaded):</div>
+      <div class="contacts-list" id="contacts-container">
+        <div style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 1rem;">Loading contacts...</div>
       </div>
     </div>
 
     <!-- Telephony Intercom: Call & Deliver Message -->
     <div class="card">
       <div class="card-title">
-        <span>Telephony &amp; Intercom</span>
-        <span class="latency-tag">Asterisk PBX</span>
+        <span>Telephony PBX Intercom</span>
+        <span class="latency-tag">Asterisk PJSIP</span>
       </div>
 
       <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Call Someone &amp; Deliver Voice Message:</div>
@@ -567,16 +811,20 @@
         <span class="status-val">Qwen 2.5 (Ollama CPU)</span>
       </div>
       <div class="status-row">
+        <span class="status-label">Front Door Intercom:</span>
+        <span class="status-val">Hikvision ISAPI &bull; 1-Tap Unlock</span>
+      </div>
+      <div class="status-row">
         <span class="status-label">Telephony PBX:</span>
         <span class="status-val">Asterisk (Ext 1001 Primary / 1002 Desk)</span>
       </div>
       <div class="status-row">
-        <span class="status-label">Voice Bridge:</span>
-        <span class="status-val">Caller ID &bull; Wyoming Whisper &amp; Piper</span>
+        <span class="status-label">Voice Pipeline:</span>
+        <span class="status-val">WebRTC/PWA Mic &bull; Wyoming Whisper &amp; Piper</span>
       </div>
       <div class="status-row">
         <span class="status-label">Fast-Path Latency:</span>
-        <span class="status-val">&lt; 10 ms Verified</span>
+        <span class="status-val">&lt; 5 ms Verified</span>
       </div>
       <div class="status-row">
         <span class="status-label">Whole-House Speakers:</span>
@@ -584,7 +832,7 @@
       </div>
       <div class="status-row">
         <span class="status-label">LG webOS TV:</span>
-        <span class="status-val">Smart TV &bull; ARC Sound Routing</span>
+        <span class="status-val">Full Source Grid &bull; ARC Sound Routing</span>
       </div>
       <div class="status-row">
         <span class="status-label">Entertainment Server:</span>
@@ -604,12 +852,29 @@
     const micStatus = document.getElementById('mic-status');
 
     // TV Elements
+    const tvPowerBtn = document.getElementById('tv-power-btn');
+    const tvPowerBtnText = document.getElementById('tv-power-btn-text');
     const tvStatusPill = document.getElementById('tv-status-pill');
     const tvSourceText = document.getElementById('tv-source-text');
     const tvPlayingText = document.getElementById('tv-playing-text');
     const tvAudioText = document.getElementById('tv-audio-text');
+    const tvVolSlider = document.getElementById('tv-vol-slider');
+    const tvVolVal = document.getElementById('tv-vol-val');
+    const tvMuteBtn = document.getElementById('tv-mute-btn');
     const btnRouteSpeakers = document.getElementById('btn-route-speakers');
     const btnRouteTv = document.getElementById('btn-route-tv');
+
+    // Intercom & Door Elements
+    const doorStatusPill = document.getElementById('door-status-pill');
+    const doorRingBanner = document.getElementById('door-ring-banner');
+    const doorUnlockBtn = document.getElementById('door-unlock-btn');
+    const quickUnlockUrlEl = document.getElementById('quick-unlock-url');
+    const copyQuickLinkBtn = document.getElementById('copy-quick-link');
+
+    // Contacts Elements
+    const contactsContainer = document.getElementById('contacts-container');
+    const contactsCount = document.getElementById('contacts-count');
+    const callTargetSelect = document.getElementById('call-target-select');
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -671,13 +936,380 @@
         cmdInput.value = '';
         fetchReminders();
         fetchTVState();
+        fetchIntercomStatus();
       } catch (err) {
         resText.textContent = "Error: Failed to reach backend.";
         resLatency.textContent = "ERR";
       }
     }
 
-    // Telephony Call & Message Dispatch
+    // ==========================================
+    // 1. IN-BROWSER AUDIO / VOICE ASSISTANT
+    // ==========================================
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecordingAudio = false;
+
+    async function toggleVoiceRecording() {
+      if (isRecordingAudio) {
+        stopVoiceRecording();
+      } else {
+        startVoiceRecording();
+      }
+    }
+
+    async function startVoiceRecording() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Audio recording is not supported in this browser or over insecure HTTP. Use HTTPS.");
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          await processRecordedAudio(audioBlob);
+        };
+
+        mediaRecorder.start();
+        isRecordingAudio = true;
+        pttBtn.classList.add('recording');
+        micStatus.textContent = "🎙️ Listening... (Tap mic again to send to Neptune)";
+        resText.textContent = "Listening to your voice...";
+      } catch (err) {
+        console.error("Microphone access error:", err);
+        micStatus.textContent = "Microphone access denied. Click to try again.";
+        alert("Please allow microphone permissions to talk with Neptune.");
+      }
+    }
+
+    function stopVoiceRecording() {
+      if (mediaRecorder && isRecordingAudio) {
+        isRecordingAudio = false;
+        pttBtn.classList.remove('recording');
+        micStatus.textContent = "Processing speech with Whisper...";
+        resText.textContent = "Transcribing audio...";
+        mediaRecorder.stop();
+      }
+    }
+
+    async function processRecordedAudio(blob) {
+      const start = performance.now();
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onloadend = async () => {
+        const base64Audio = reader.result.split(',')[1];
+        try {
+          const res = await apiFetch('/api/voice/interact', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ audio: base64Audio })
+          });
+          const data = await res.json();
+          const duration = Math.round(performance.now() - start);
+
+          if (data.transcription) {
+            cmdInput.value = data.transcription;
+          }
+          resText.textContent = (data.transcription ? `"${data.transcription}" → ` : '') + (data.speech || "Done.");
+          resLatency.textContent = (data.latency_ms ?? duration) + " ms";
+          micStatus.textContent = "Tap microphone to speak or type command below";
+
+          // Play synthesized audio response from Piper TTS directly in browser!
+          if (data.audio) {
+            const replyAudio = new Audio('data:audio/wav;base64,' + data.audio);
+            replyAudio.play().catch(e => console.warn("Browser audio playback prevented:", e));
+          }
+
+          fetchReminders();
+          fetchTVState();
+          fetchIntercomStatus();
+        } catch (err) {
+          console.error("Voice interact failed:", err);
+          resText.textContent = "Error: Failed to process voice.";
+          micStatus.textContent = "Tap microphone to speak or type command below";
+        }
+      };
+    }
+
+    pttBtn.addEventListener('click', toggleVoiceRecording);
+
+    // ==========================================
+    // 2. TV CONTROL DASHBOARD
+    // ==========================================
+    let currentTVPower = 'off';
+
+    async function fetchTVState() {
+      try {
+        const res = await apiFetch('/api/tv/state');
+        const data = await res.json();
+        if (data && data.success) {
+          currentTVPower = data.power || 'off';
+          tvStatusPill.className = `tv-pill pill-${currentTVPower}`;
+          tvStatusPill.textContent = currentTVPower.toUpperCase();
+          tvSourceText.textContent = data.source || 'Live TV';
+          tvPlayingText.textContent = data.title ? `"${data.title}"` : (currentTVPower === 'off' ? 'TV is powered off' : 'No media title');
+
+          const isArc = data.soundOutput === 'external_arc' || data.soundOutput === 'optical';
+          tvAudioText.textContent = isArc ? 'Whole-House Speakers (ARC)' : 'Internal TV Speakers';
+
+          btnRouteSpeakers.classList.toggle('active-output', isArc);
+          btnRouteTv.classList.toggle('active-output', !isArc);
+
+          const isMuted = Boolean(data.isMuted);
+          tvMuteBtn.textContent = isMuted ? 'Unmute' : 'Mute';
+          tvMuteBtn.classList.toggle('active-output', isMuted);
+
+          if (typeof data.volumePercent === 'number') {
+            tvVolSlider.value = data.volumePercent;
+            tvVolVal.textContent = `${data.volumePercent}%`;
+          }
+
+          const isOn = currentTVPower !== 'off';
+          tvPowerBtn.classList.toggle('is-on', isOn);
+          tvPowerBtnText.textContent = isOn ? 'Turn Off' : 'Turn On';
+
+          // Highlight active source button
+          document.querySelectorAll('.btn-source').forEach((b) => {
+            const btnText = b.textContent.trim().toLowerCase();
+            const curSource = (data.source || '').toLowerCase();
+            b.classList.toggle('active-source', btnText === curSource);
+          });
+        }
+      } catch (e) {
+        // Soft ignore
+      }
+    }
+
+    async function tvPowerToggle() {
+      const nextAction = currentTVPower === 'off' ? 'on' : 'off';
+      resText.textContent = `Turning TV ${nextAction}...`;
+      await apiFetch('/api/tv/power', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: nextAction })
+      });
+      setTimeout(fetchTVState, 800);
+    }
+
+    async function tvSetSource(source) {
+      resText.textContent = `Switching TV to ${source}...`;
+      await apiFetch('/api/tv/source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source })
+      });
+      setTimeout(fetchTVState, 800);
+    }
+
+    async function tvSetVolume(action, level) {
+      await apiFetch('/api/tv/volume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, level: level ? parseInt(level, 10) : undefined })
+      });
+      setTimeout(fetchTVState, 600);
+    }
+
+    async function tvLaunchCustomApp() {
+      const input = document.getElementById('custom-app-input');
+      if (!input || !input.value.trim()) return;
+      const app = input.value.trim();
+      resText.textContent = `Launching ${app} on TV...`;
+      await apiFetch('/api/tv/app', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app })
+      });
+      input.value = '';
+      setTimeout(fetchTVState, 800);
+    }
+
+    // ==========================================
+    // 3. HIKVISION INTERCOM & FRONT DOOR ACCESS
+    // ==========================================
+    async function fetchIntercomStatus() {
+      try {
+        const res = await apiFetch('/api/intercom/status');
+        const data = await res.json();
+        if (data) {
+          const isUnlocked = data.door_state === 'unlocked';
+          doorStatusPill.className = `tv-pill ${isUnlocked ? 'pill-paused' : 'pill-playing'}`;
+          doorStatusPill.textContent = isUnlocked ? 'UNLOCKED' : 'LOCKED';
+          doorUnlockBtn.classList.toggle('unlocked', isUnlocked);
+          doorUnlockBtn.innerHTML = isUnlocked ? '<span>✅</span> DOOR UNLOCKED' : '<span>🔓</span> OPEN FRONT DOOR';
+
+          // Update Quick-Unlock link
+          const token = data.quick_token || 'neptune-open-door';
+          const fullQuickUrl = `${window.location.origin}/api/door/quick-unlock?token=${token}`;
+          if (quickUnlockUrlEl) {
+            quickUnlockUrlEl.textContent = fullQuickUrl;
+          }
+
+          // Check if there is a recent ring in last 10 seconds
+          if (Array.isArray(data.recent_rings) && data.recent_rings.length > 0) {
+            const last = data.recent_rings[data.recent_rings.length - 1];
+            const ageSec = (Date.now() - last.timestamp) / 1000;
+            if (ageSec < 15) {
+              doorRingBanner.style.display = 'flex';
+            } else {
+              doorRingBanner.style.display = 'none';
+            }
+          }
+        }
+      } catch (e) {
+        // Soft ignore
+      }
+    }
+
+    async function doorUnlock() {
+      doorUnlockBtn.innerHTML = '<span>⏳</span> UNLOCKING...';
+      try {
+        const res = await apiFetch('/api/door/unlock', { method: 'POST' });
+        const data = await res.json();
+        doorUnlockBtn.innerHTML = '<span>✅</span> DOOR UNLOCKED!';
+        doorUnlockBtn.classList.add('unlocked');
+        resText.textContent = data.speech || "Front door unlocked!";
+        doorRingBanner.style.display = 'none';
+        setTimeout(fetchIntercomStatus, 1000);
+      } catch (err) {
+        alert("Failed to unlock door.");
+        fetchIntercomStatus();
+      }
+    }
+
+    async function doorTestRing() {
+      resText.textContent = "Testing intercom doorbell ring...";
+      await apiFetch('/api/intercom/ring', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'Cockpit Test' })
+      });
+      doorRingBanner.style.display = 'flex';
+      setTimeout(fetchIntercomStatus, 500);
+    }
+
+    if (copyQuickLinkBtn) {
+      copyQuickLinkBtn.addEventListener('click', () => {
+        const url = quickUnlockUrlEl.textContent;
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(url).then(() => {
+            copyQuickLinkBtn.textContent = 'Copied!';
+            setTimeout(() => { copyQuickLinkBtn.textContent = 'Copy Link'; }, 2000);
+          });
+        }
+      });
+    }
+
+    // ==========================================
+    // 4. DYNAMIC CONTACTS & EXTENSIONS
+    // ==========================================
+    let cachedContacts = [];
+
+    async function fetchContacts() {
+      try {
+        const res = await apiFetch('/api/contacts');
+        const data = await res.json();
+        cachedContacts = data.contacts || [];
+        renderContacts(cachedContacts);
+        syncContactDropdowns(cachedContacts);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function renderContacts(contacts) {
+      contactsCount.textContent = `${contacts.length} Extensions`;
+      if (contacts.length === 0) {
+        contactsContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 1rem;">No contacts registered.</div>';
+        return;
+      }
+
+      let html = '';
+      for (const c of contacts) {
+        const safeName = escapeHtml(c.name);
+        const safeExt = escapeHtml(c.extension);
+        const safeRole = escapeHtml(c.role);
+        const isSystem = safeExt === '7000';
+
+        html += `
+          <div class="contact-item">
+            <div style="display: flex; align-items: center;">
+              <span class="contact-badge">${safeExt}</span>
+              <div>
+                <strong>${safeName}</strong>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">${safeRole}</div>
+              </div>
+            </div>
+            ${isSystem ? '<span style="font-size: 0.72rem; color: var(--accent);">&#129302; System Operator</span>' : `<button class="btn-del" onclick="deleteContact('${safeExt}')" title="Delete Extension">&times;</button>`}
+          </div>
+        `;
+      }
+      contactsContainer.innerHTML = html;
+    }
+
+    function syncContactDropdowns(contacts) {
+      if (!callTargetSelect) return;
+      const curVal = callTargetSelect.value;
+      let optHtml = '';
+      for (const c of contacts) {
+        if (c.extension === '7000') continue; // Don't call assistant operator
+        optHtml += `<option value="${escapeHtml(c.extension)}">${escapeHtml(c.name)} (Ext ${escapeHtml(c.extension)})</option>`;
+      }
+      callTargetSelect.innerHTML = optHtml;
+      if (curVal) callTargetSelect.value = curVal;
+    }
+
+    async function submitAddContact() {
+      const nameInput = document.getElementById('contact-name-input');
+      const extInput = document.getElementById('contact-ext-input');
+      const roleInput = document.getElementById('contact-role-input');
+
+      if (!nameInput.value.trim() || !extInput.value.trim()) {
+        alert("Please enter both a name and an extension number (e.g. 1003).");
+        return;
+      }
+
+      const res = await apiFetch('/api/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          extension: extInput.value.trim(),
+          role: roleInput.value.trim() || 'Family Member'
+        })
+      });
+
+      if (res.ok) {
+        nameInput.value = '';
+        extInput.value = '';
+        roleInput.value = '';
+        fetchContacts();
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to add contact.");
+      }
+    }
+
+    async function deleteContact(id) {
+      if (!confirm(`Delete extension ${id}?`)) return;
+      await apiFetch(`/api/contacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      fetchContacts();
+    }
+
+    // ==========================================
+    // 5. TELEPHONY CALL DISPATCH
+    // ==========================================
     async function sendCallMessage(target, message) {
       if (!message) return;
       resText.textContent = `Dialing ${target}...`;
@@ -701,7 +1333,6 @@
       }
     }
 
-    const callTargetSelect = document.getElementById('call-target-select');
     const callMsgInput = document.getElementById('call-msg-input');
     const callSendBtn = document.getElementById('call-send-btn');
     if (callSendBtn && callMsgInput) {
@@ -719,30 +1350,9 @@
       });
     }
 
-    // Live TV State Polling
-    async function fetchTVState() {
-      try {
-        const res = await apiFetch('/api/tv/state');
-        const data = await res.json();
-        if (data && data.success) {
-          const power = data.power || 'off';
-          tvStatusPill.className = `tv-pill pill-${power}`;
-          tvStatusPill.textContent = power.toUpperCase();
-          tvSourceText.textContent = data.source || 'Live TV';
-          tvPlayingText.textContent = data.title ? `"${data.title}"` : (power === 'off' ? 'TV is powered off' : 'No media title');
-
-          const isArc = data.soundOutput === 'external_arc' || data.soundOutput === 'optical';
-          tvAudioText.textContent = isArc ? 'Whole-House Speakers (ARC)' : 'Internal TV Speakers';
-
-          btnRouteSpeakers.classList.toggle('active-output', isArc);
-          btnRouteTv.classList.toggle('active-output', !isArc);
-        }
-      } catch (e) {
-        // Soft ignore
-      }
-    }
-
-    // Reminders Fetch & Render
+    // ==========================================
+    // 6. REMINDERS & AGENDA
+    // ==========================================
     let currentReminderFilter = 'all';
     let cachedActiveReminders = [];
     let cachedRecentReminders = [];
@@ -950,19 +1560,14 @@
       });
     }
 
-    // PTT Microphone Simulation
-    let isRecording = false;
-    pttBtn.addEventListener('click', () => {
-      isRecording = !isRecording;
-      pttBtn.classList.toggle('recording', isRecording);
-      micStatus.textContent = isRecording ? "Listening... (Speak now)" : "Click to speak or use text command";
-    });
-
     // Initial polls & recurring refresh
+    fetchContacts();
     fetchReminders();
     fetchTVState();
+    fetchIntercomStatus();
     setInterval(fetchReminders, 3000);
     setInterval(fetchTVState, 4000);
+    setInterval(fetchIntercomStatus, 3000);
   </script>
 </body>
 </html>

@@ -92,7 +92,23 @@ export class FastPathRouter {
       };
     }
 
-    // 2. CONSEQUENTIAL LOCKS & GARAGE / DOOR COVERS (Always deterministic so LLM cannot alter args)
+    // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock the door", "open front door")
+    const doorUnlockMatch = clean.match(
+      /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(?:front\s+)?door$/
+    );
+    if (doorUnlockMatch) {
+      return {
+        matched: true,
+        intent: 'intercom_unlock_door',
+        domain: 'intercom',
+        service: 'unlock_door',
+        entity_id: 'intercom.front_door',
+        confirmation_speech: 'Opening the front door.',
+        requires_confirmation: false,
+      };
+    }
+
+    // 2B. CONSEQUENTIAL LOCKS & GARAGE / DOOR COVERS (Always deterministic so LLM cannot alter args)
     const lockMatch = clean.match(/^(?:please\s+)?(lock|unlock)\s+(?:the\s+)?([a-z0-9_\s]+)$/);
     if (lockMatch) {
       const action = lockMatch[1];
