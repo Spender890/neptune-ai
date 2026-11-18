@@ -56,7 +56,14 @@ cmd_start() {
   fi
 
   log_info "Launching Docker containers (Caddy, Backend, Asterisk, Ollama, Whisper, Piper)..."
-  $DOCKER_CMD compose up -d
+  if ! $DOCKER_CMD compose up -d --remove-orphans; then
+    log_warn "Detected conflicting or stale container state. Removing stale containers..."
+    for c in neptune-whisper neptune-piper neptune-caddy neptune-backend neptune-asterisk neptune-ollama; do
+      $DOCKER_CMD rm -f "$c" >/dev/null 2>&1 || true
+    done
+    log_info "Retrying clean startup..."
+    $DOCKER_CMD compose up -d --remove-orphans
+  fi
 
   log_info "Waiting for core services to become ready..."
   sleep 4
