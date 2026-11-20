@@ -333,7 +333,7 @@ function computeDigestAuth(
   if (qop && qop.toLowerCase().includes('auth')) {
     authHeader += `, qop=auth, nc=${ncStr}, cnonce="${cnonce}"`;
   }
-  if (opaque) {
+  if (opaque !== undefined) {
     authHeader += `, opaque="${opaque}"`;
   }
   return authHeader;
@@ -344,8 +344,7 @@ function computeDigestAuth(
    */
   private sendHikvisionUnlock(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
     return new Promise((resolve) => {
-      const xmlBody =
-        '<?xml version="1.0" encoding="UTF-8"?><RemoteControlDoor version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema"><cmd>open</cmd></RemoteControlDoor>';
+      const xmlBody = '<RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>';
       const uri = `/ISAPI/AccessControl/RemoteControl/door/${door.doorIndex || 1}`;
 
       const doRequest = (authHeader?: string) => {
