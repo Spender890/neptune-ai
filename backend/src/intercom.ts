@@ -74,11 +74,13 @@ export class IntercomManager {
 
     const door1Host = process.env.HIKVISION_DOOR1_HOST || process.env.HIKVISION_HOST || '192.168.1.39';
     const door1Name = process.env.HIKVISION_DOOR1_NAME || 'Front Door';
+    const door1Index = parseInt(process.env.HIKVISION_DOOR1_INDEX || '1', 10);
     const door1Entity = process.env.HIKVISION_DOOR1_ENTITY || process.env.DOOR_ENTITY_ID || 'lock.front_door';
 
     const door2Host = process.env.HIKVISION_DOOR2_HOST || '192.168.1.40';
-    const door2Name = process.env.HIKVISION_DOOR2_NAME || 'Gate / Side Door';
-    const door2Entity = process.env.HIKVISION_DOOR2_ENTITY || 'lock.side_gate';
+    const door2Name = process.env.HIKVISION_DOOR2_NAME || 'Garage';
+    const door2Index = parseInt(process.env.HIKVISION_DOOR2_INDEX || '1', 10);
+    const door2Entity = process.env.HIKVISION_DOOR2_ENTITY || 'cover.garage_door';
 
     const doors: HikDoorConfig[] = [
       {
@@ -88,7 +90,7 @@ export class IntercomManager {
         port: defaultPort,
         user: defaultUser,
         pass: defaultPass,
-        doorIndex: defaultIndex,
+        doorIndex: door1Index,
         doorEntityId: door1Entity,
       },
       {
@@ -98,7 +100,7 @@ export class IntercomManager {
         port: defaultPort,
         user: defaultUser,
         pass: defaultPass,
-        doorIndex: defaultIndex,
+        doorIndex: door2Index,
         doorEntityId: door2Entity,
       },
     ];
@@ -141,7 +143,7 @@ export class IntercomManager {
     if (clean === 'all' || clean === 'both' || clean === 'all doors' || clean === 'both doors') {
       return [...this.config.doors];
     }
-    if (clean === 'door2' || clean === 'gate' || clean === 'side' || clean === 'back' || clean === 'second') {
+    if (clean === 'door2' || clean === 'garage' || clean === 'garage door' || clean === 'gate' || clean === 'side' || clean === 'back' || clean === 'second') {
       return this.config.doors.filter((d) => d.id === 'door2');
     }
     // Default to door1 (Front Door)
@@ -344,7 +346,7 @@ function computeDigestAuth(
    */
   private sendHikvisionUnlock(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
     return new Promise((resolve) => {
-      const xmlBody = '<RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>';
+      const xmlBody = `<RemoteControlDoor><channelNo>${door.doorIndex || 1}</channelNo><cmd>open</cmd><controlType>monitor</controlType></RemoteControlDoor>`;
       const uri = `/ISAPI/AccessControl/RemoteControl/door/${door.doorIndex || 1}`;
 
       const doRequest = (authHeader?: string) => {

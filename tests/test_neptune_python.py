@@ -317,7 +317,7 @@ class TestRepositoryConfigAndSecurity(unittest.TestCase):
         self.assertIn("door1-unlock-btn", html_text)
         self.assertIn("door2-unlock-btn", html_text)
         self.assertIn("OPEN FRONT DOOR", html_text)
-        self.assertIn("OPEN GATE", html_text)
+        self.assertIn("OPEN GARAGE", html_text)
         self.assertIn("/api/door/quick-unlock", html_text)
         self.assertIn("doorTestRing", html_text)
         self.assertIn("door-ring-banner", html_text)
