@@ -1,3 +1,4 @@
+import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import * as http from 'http';
 import { HomeAssistantClient } from './homeassistant';
@@ -145,6 +146,12 @@ export class IntercomManager {
     }
     if (clean === 'door2' || clean === 'garage' || clean === 'garage door' || clean === 'gate' || clean === 'side' || clean === 'back' || clean === 'second') {
       return this.config.doors.filter((d) => d.id === 'door2');
+    }
+    if (clean === 'door1_relay2' || clean === 'front_relay2' || clean === 'front2' || clean === 'relay2') {
+      const d1 = this.config.doors.find((d) => d.id === 'door1');
+      if (d1) {
+        return [{ ...d1, doorIndex: 2, name: `${d1.name} (Relay 2)` }];
+      }
     }
     // Default to door1 (Front Door)
     return this.config.doors.filter((d) => d.id === 'door1');
@@ -331,23 +338,102 @@ function computeDigestAuth(
     response = crypto.createHash('md5').update(`${ha1}:${nonce}:${ha2}`).digest('hex');
   }
 
-  let authHeader = `Digest username="${user}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}"`;
+  // IMPORTANT: Hikvision embedded webs parser strictly evaluates realm, nonce, uri, cnonce, nc, qop BEFORE response.
+  const parts: string[] = [
+    `username="${user}"`,
+    `realm="${realm}"`,
+    `nonce="${nonce}"`,
+    `uri="${uri}"`,
+  ];
+
   if (qop && qop.toLowerCase().includes('auth')) {
-    authHeader += `, qop=auth, nc=${ncStr}, cnonce="${cnonce}"`;
+    parts.push(`cnonce="${cnonce}"`);
+    parts.push(`nc=${ncStr}`);
+    parts.push(`qop=auth`);
   }
-  if (opaque !== undefined) {
-    authHeader += `, opaque="${opaque}"`;
+
+  parts.push(`response="${response}"`);
+
+  if (opaque !== undefined && opaque !== '') {
+    parts.push(`opaque="${opaque}"`);
   }
-  return authHeader;
+
+  return `Digest ${parts.join(', ')}`;
 }
 
   /**
-   * Issues Hikvision ISAPI Door Relay Unlock HTTP request using Digest Authentication.
+   * Issues Hikvision ISAPI Door Relay Unlock HTTP request.
+   * Primary: uses curl (which matches the exact tested/verified command line and RFC digest authentication).
+   * Fallback: uses native Node.js HTTP Digest implementation.
    */
-  private sendHikvisionUnlock(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
+  private async sendHikvisionUnlock(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
+    try {
+      const curlRes = await this.sendHikvisionUnlockCurl(door);
+      if (curlRes.success) {
+        return curlRes;
+      }
+      console.warn(`[Hikvision ISAPI] curl on ${door.host} failed (${curlRes.details}), trying Node fallback...`);
+    } catch (err: unknown) {
+      console.warn(`[Hikvision ISAPI] curl execution error on ${door.host}:`, err);
+    }
+
+    return this.sendHikvisionUnlockNode(door);
+  }
+
+  private sendHikvisionUnlockCurl(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
     return new Promise((resolve) => {
-      const xmlBody = `<RemoteControlDoor><channelNo>${door.doorIndex || 1}</channelNo><cmd>open</cmd><controlType>monitor</controlType></RemoteControlDoor>`;
-      const uri = `/ISAPI/AccessControl/RemoteControl/door/${door.doorIndex || 1}`;
+      const channel = door.doorIndex || 1;
+      const xmlBody = `<RemoteControlDoor><channelNo>${channel}</channelNo><cmd>open</cmd><controlType>monitor</controlType></RemoteControlDoor>`;
+      const url = `http://${door.host}:${door.port || 80}/ISAPI/AccessControl/RemoteControl/door/${channel}`;
+      const userAuth = `${door.user}:${door.pass}`;
+
+      const args = [
+        '-s',
+        '-i',
+        '--digest',
+        '-u', userAuth,
+        '-X', 'PUT',
+        '-H', 'Content-Type: application/xml',
+        '-d', xmlBody,
+        '--connect-timeout', '4',
+        '--max-time', '6',
+        url,
+      ];
+
+      cp.execFile('curl', args, (error, stdout, stderr) => {
+        if (error) {
+          return resolve({
+            success: false,
+            details: `curl error: ${error.message}${stderr ? ' (' + stderr.trim() + ')' : ''}`,
+          });
+        }
+
+        const output = stdout.toString();
+        const statusMatch = output.match(/HTTP\/1\.[01]\s+(\d+)/i);
+        const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+        const isOkXml = output.includes('<statusString>OK</statusString>') || output.includes('<subStatusCode>ok</subStatusCode>');
+
+        if ((statusCode >= 200 && statusCode < 300) || isOkXml) {
+          console.log(`[Hikvision ISAPI] Successfully unlocked door on ${door.host} (${door.name}) via curl`);
+          return resolve({
+            success: true,
+            details: `Hikvision ${door.host} responded ${statusCode || 200}: Door Opened`,
+          });
+        }
+
+        return resolve({
+          success: false,
+          details: `Hikvision ${door.host} returned HTTP ${statusCode}: ${output.slice(0, 150)}`,
+        });
+      });
+    });
+  }
+
+  private sendHikvisionUnlockNode(door: HikDoorConfig): Promise<{ success: boolean; details?: string }> {
+    return new Promise((resolve) => {
+      const channel = door.doorIndex || 1;
+      const xmlBody = `<RemoteControlDoor><channelNo>${channel}</channelNo><cmd>open</cmd><controlType>monitor</controlType></RemoteControlDoor>`;
+      const uri = `/ISAPI/AccessControl/RemoteControl/door/${channel}`;
 
       const doRequest = (authHeader?: string) => {
         const headers: Record<string, string | number> = {
@@ -373,7 +459,6 @@ function computeDigestAuth(
               data += chunk;
             });
             res.on('end', () => {
-              // If 401 Unauthorized, challenge with Digest Authentication
               if (res.statusCode === 401 && res.headers['www-authenticate'] && !authHeader) {
                 const challengeHeader = res.headers['www-authenticate'];
                 const challengeStr = Array.isArray(challengeHeader) ? challengeHeader[0] : challengeHeader;
@@ -385,7 +470,7 @@ function computeDigestAuth(
               }
 
               if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                console.log(`[Hikvision ISAPI] Successfully unlocked door on ${door.host} (${door.name})`);
+                console.log(`[Hikvision ISAPI] Successfully unlocked door on ${door.host} (${door.name}) via Node`);
                 resolve({ success: true, details: `Hikvision ${door.host} responded ${res.statusCode}: Door Opened` });
               } else {
                 console.warn(`[Hikvision ISAPI] Unlock failed on ${door.host} (${door.name}): HTTP ${res.statusCode} - ${data.slice(0, 150)}`);
@@ -410,7 +495,6 @@ function computeDigestAuth(
         req.end();
       };
 
-      // Initial call triggers 401 challenge, which computes digest auth and unlocks the door
       doRequest();
     });
   }

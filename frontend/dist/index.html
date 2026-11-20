@@ -587,9 +587,14 @@
 
       <!-- Dual Door Unlock Buttons -->
       <div style="display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.85rem;">
-        <button class="door-unlock-btn" id="door1-unlock-btn" onclick="doorUnlock('door1')">
-          <span>🔓</span> OPEN FRONT DOOR (192.168.1.39)
-        </button>
+        <div style="display: flex; gap: 0.4rem;">
+          <button class="door-unlock-btn" id="door1-unlock-btn" onclick="doorUnlock('door1')" style="flex: 1;">
+            <span>🔓</span> OPEN FRONT DOOR (192.168.1.39)
+          </button>
+          <button class="ctrl-btn" id="door1-relay2-btn" onclick="doorUnlock('door1_relay2')" style="font-size: 0.72rem; padding: 0.4rem 0.6rem; white-space: nowrap;" title="Test Relay 2 on Front Door if lock is wired to second terminal">
+            Relay 2
+          </button>
+        </div>
         <button class="door-unlock-btn" id="door2-unlock-btn" onclick="doorUnlock('door2')" style="background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%); box-shadow: 0 4px 20px rgba(14, 165, 233, 0.4);">
           <span>🚗</span> OPEN GARAGE (192.168.1.40)
         </button>
@@ -1221,7 +1226,8 @@
     }
 
     async function doorUnlock(target = 'door1') {
-      const btn = target === 'door2' ? door2UnlockBtn : door1UnlockBtn;
+      const btn = target === 'door2' ? door2UnlockBtn : (target === 'door1_relay2' ? document.getElementById('door1-relay2-btn') : door1UnlockBtn);
+      const originalText = btn ? btn.innerHTML : '';
       if (btn) btn.innerHTML = '<span>⏳</span> UNLOCKING...';
       try {
         const res = await apiFetch('/api/door/unlock', {
@@ -1230,12 +1236,20 @@
           body: JSON.stringify({ door: target })
         });
         const data = await res.json();
+        if (!res.ok) {
+          const detailMsg = (data.results && data.results[0] && data.results[0].details) || data.speech || 'Server returned error';
+          throw new Error(detailMsg);
+        }
         resText.textContent = data.speech || "Door unlocked!";
         doorRingBanner.style.display = 'none';
         setTimeout(fetchIntercomStatus, 600);
       } catch (err) {
-        alert("Failed to unlock door.");
+        alert("Door Unlock: " + (err.message || err));
         fetchIntercomStatus();
+      } finally {
+        if (btn && originalText) {
+          setTimeout(() => { btn.innerHTML = originalText; }, 2000);
+        }
       }
     }
 
