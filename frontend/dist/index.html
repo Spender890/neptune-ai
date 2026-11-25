@@ -566,13 +566,13 @@
       </div>
     </div>
 
-    <!-- Front Door & Hikvision Intercom Card (Dual Station Support) -->
+    <!-- Door Access (Home Assistant) Card (Dual Station Support) -->
     <div class="card">
       <div class="card-title">
-        <span>Hikvision Intercoms</span>
+        <span>Door Access (Home Assistant)</span>
         <div style="display: flex; gap: 0.35rem;">
-          <span id="door1-status-pill" class="tv-pill pill-playing" title="192.168.1.39">FRONT: LOCKED</span>
-          <span id="door2-status-pill" class="tv-pill pill-playing" title="192.168.1.40">GARAGE: LOCKED</span>
+          <span id="door1-status-pill" class="tv-pill pill-playing" title="Home Assistant">FRONT: LOCKED</span>
+          <span id="door2-status-pill" class="tv-pill pill-playing" title="Home Assistant">GARAGE: LOCKED</span>
         </div>
       </div>
 
@@ -587,16 +587,11 @@
 
       <!-- Dual Door Unlock Buttons -->
       <div style="display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.85rem;">
-        <div style="display: flex; gap: 0.4rem;">
-          <button class="door-unlock-btn" id="door1-unlock-btn" onclick="doorUnlock('door1')" style="flex: 1;">
-            <span>🔓</span> OPEN FRONT DOOR (192.168.1.39)
-          </button>
-          <button class="ctrl-btn" id="door1-relay2-btn" onclick="doorUnlock('door1_relay2')" style="font-size: 0.72rem; padding: 0.4rem 0.6rem; white-space: nowrap;" title="Test Relay 2 on Front Door if lock is wired to second terminal">
-            Relay 2
-          </button>
-        </div>
+        <button class="door-unlock-btn" id="door1-unlock-btn" onclick="doorUnlock('door1')">
+          <span>🔓</span> OPEN FRONT DOOR
+        </button>
         <button class="door-unlock-btn" id="door2-unlock-btn" onclick="doorUnlock('door2')" style="background: linear-gradient(135deg, #0284c7 0%, #0ea5e9 100%); box-shadow: 0 4px 20px rgba(14, 165, 233, 0.4);">
-          <span>🚗</span> OPEN GARAGE (192.168.1.40)
+          <span>🚗</span> OPEN GARAGE
         </button>
         <button class="ctrl-btn" onclick="doorUnlock('all')" style="padding: 0.65rem; font-weight: 600; border-color: rgba(255,255,255,0.15);">
           🔓 Open Both Doors Together
@@ -618,8 +613,8 @@
       </div>
       <div style="display: flex; gap: 0.4rem; margin-top: 0.4rem;">
         <select id="quick-door-target" class="select-input" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.78rem;" onchange="updateQuickUnlockUrl()">
-          <option value="door1" selected>Front Door (192.168.1.39)</option>
-          <option value="door2">Garage (192.168.1.40)</option>
+          <option value="door1" selected>Front Door</option>
+          <option value="door2">Garage</option>
           <option value="all">Both Doors Together</option>
         </select>
         <button class="btn-send" id="copy-quick-link" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;">Copy Link</button>
@@ -1192,9 +1187,10 @@
             const isUn = d1.state === 'unlocked';
             door1StatusPill.className = `tv-pill ${isUn ? 'pill-paused' : 'pill-playing'}`;
             door1StatusPill.textContent = isUn ? 'FRONT: UNLOCKED' : 'FRONT: LOCKED';
+            door1StatusPill.title = d1.entity_id || 'Home Assistant';
             if (door1UnlockBtn) {
               door1UnlockBtn.classList.toggle('unlocked', isUn);
-              door1UnlockBtn.innerHTML = isUn ? '<span>✅</span> FRONT DOOR UNLOCKED' : '<span>🔓</span> OPEN FRONT DOOR (192.168.1.39)';
+              door1UnlockBtn.innerHTML = isUn ? '<span>✅</span> FRONT DOOR UNLOCKED' : '<span>🔓</span> OPEN FRONT DOOR';
             }
           }
 
@@ -1202,9 +1198,10 @@
             const isUn = d2.state === 'unlocked';
             door2StatusPill.className = `tv-pill ${isUn ? 'pill-paused' : 'pill-playing'}`;
             door2StatusPill.textContent = isUn ? 'GARAGE: UNLOCKED' : 'GARAGE: LOCKED';
+            door2StatusPill.title = d2.entity_id || 'Home Assistant';
             if (door2UnlockBtn) {
               door2UnlockBtn.classList.toggle('unlocked', isUn);
-              door2UnlockBtn.innerHTML = isUn ? '<span>✅</span> GARAGE UNLOCKED' : '<span>🚗</span> OPEN GARAGE (192.168.1.40)';
+              door2UnlockBtn.innerHTML = isUn ? '<span>✅</span> GARAGE UNLOCKED' : '<span>🚗</span> OPEN GARAGE';
             }
           }
 
@@ -1226,7 +1223,7 @@
     }
 
     async function doorUnlock(target = 'door1') {
-      const btn = target === 'door2' ? door2UnlockBtn : (target === 'door1_relay2' ? document.getElementById('door1-relay2-btn') : door1UnlockBtn);
+      const btn = target === 'door2' ? door2UnlockBtn : door1UnlockBtn;
       const originalText = btn ? btn.innerHTML : '';
       if (btn) btn.innerHTML = '<span>⏳</span> UNLOCKING...';
       try {

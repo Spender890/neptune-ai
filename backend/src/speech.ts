@@ -93,7 +93,7 @@ class WyomingSocketStream {
       cursor += dataLen;
     }
 
-    let payload = Buffer.alloc(0);
+    let payload: Buffer = Buffer.alloc(0);
     if (payloadLen > 0) {
       payload = this.buffer.subarray(cursor, cursor + payloadLen);
       cursor += payloadLen;

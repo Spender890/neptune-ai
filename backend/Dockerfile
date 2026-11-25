@@ -17,8 +17,8 @@ FROM node:20.18.1-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
-# Install ffmpeg and curl for audio processing and reliable hardware ISAPI integration
-RUN apk add --no-cache ffmpeg curl
+# Install ffmpeg for browser audio format detection, decoding and resampling (e.g. WebM/Opus, MP4/AAC -> 16kHz PCM)
+RUN apk add --no-cache ffmpeg
 
 COPY package*.json ./
 RUN npm ci --omit=dev

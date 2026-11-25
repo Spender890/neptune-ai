@@ -137,6 +137,7 @@ export const TOOL_SCHEMAS = [
         required: ['action', 'target_player'],
       },
     },
+  },
   {
     type: 'function',
     function: {
