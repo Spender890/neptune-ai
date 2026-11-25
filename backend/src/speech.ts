@@ -1,3 +1,4 @@
+import * as cp from 'child_process';
 import * as net from 'net';
 
 export interface WyomingEvent {
@@ -177,15 +178,88 @@ export async function synthesizeSpeechWyoming(
   });
 }
 
+const SILENCE_HALLUCINATIONS = new Set(['', '.', '...', 'you']);
+
 /**
- * Transcribes PCM / WAV audio via Wyoming Whisper TCP protocol.
+ * Decodes browser audio (WebM/Opus, MP4/AAC, Ogg, WAV) to 16kHz 16-bit mono linear PCM.
+ */
+async function decodeToPcm16kMono(audioBuffer: Buffer): Promise<Buffer> {
+  if (
+    audioBuffer.length > 44 &&
+    audioBuffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    audioBuffer.subarray(8, 12).toString('ascii') === 'WAVE'
+  ) {
+    const audioFormat = audioBuffer.readUInt16LE(20);
+    const channels = audioBuffer.readUInt16LE(22);
+    const sampleRate = audioBuffer.readUInt32LE(24);
+    const bitDepth = audioBuffer.readUInt16LE(34);
+    if (audioFormat === 1 && channels === 1 && sampleRate === 16000 && bitDepth === 16) {
+      return audioBuffer.subarray(44);
+    }
+  }
+
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let settled = false;
+
+    const ff = cp.spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-ar', '16000', '-ac', '1', '-f', 's16le', 'pipe:1']);
+
+    const finish = (pcm: Buffer) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(pcm);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      console.error('[STT] ffmpeg decode timed out after 8000ms.');
+      try {
+        ff.kill('SIGKILL');
+      } catch {
+        // ignore kill error
+      }
+      finish(Buffer.alloc(0));
+    }, 8000);
+
+    ff.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    ff.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    ff.stdin.on('error', () => undefined);
+
+    ff.on('error', (err) => {
+      console.error('[STT] ffmpeg spawn error:', err.message);
+      finish(Buffer.alloc(0));
+    });
+
+    ff.on('close', (code) => {
+      if (code !== 0) {
+        const errText = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        console.error(`[STT] ffmpeg exited with code ${code}: ${errText || 'unknown error'}`);
+        finish(Buffer.alloc(0));
+        return;
+      }
+      finish(Buffer.concat(chunks));
+    });
+
+    ff.stdin.end(audioBuffer);
+  });
+}
+
+/**
+ * Transcribes PCM / WAV / browser-encoded audio via Wyoming Whisper TCP protocol.
  */
 export async function transcribeAudioWyoming(
   audioBuffer: Buffer,
   host: string = process.env.WHISPER_HOST || '127.0.0.1',
   port: number = parseInt(process.env.WHISPER_PORT || '10300', 10),
-  timeoutMs: number = 10000
+  timeoutMs: number = 20000
 ): Promise<string> {
+  const pcm = await decodeToPcm16kMono(audioBuffer);
+  if (pcm.length < 320) {
+    return '';
+  }
+
   return new Promise((resolve) => {
     let resolved = false;
     const socket = new net.Socket();
@@ -200,17 +274,12 @@ export async function transcribeAudioWyoming(
     };
 
     const timer = setTimeout(() => {
+      console.error(`[STT] Wyoming Whisper timed out after ${timeoutMs}ms (${host}:${port}).`);
       cleanup('');
     }, timeoutMs);
 
     socket.connect(port, host, () => {
-      // If WAV header present, strip 44 bytes to get raw PCM, or send chunks
-      let pcm = audioBuffer;
-      let rate = 16000;
-      if (audioBuffer.length > 44 && audioBuffer.subarray(0, 4).toString('ascii') === 'RIFF') {
-        rate = audioBuffer.readUInt32LE(24);
-        pcm = audioBuffer.subarray(44);
-      }
+      const rate = 16000;
 
       // 1. Transcribe event
       const transReq = JSON.stringify({ type: 'transcribe', data: { language: 'en' } }) + '\n';
@@ -248,14 +317,16 @@ export async function transcribeAudioWyoming(
         if (!ev) break;
         if (ev.type === 'transcript') {
           const text = typeof ev.data.text === 'string' ? ev.data.text.trim() : '';
+          const cleaned = SILENCE_HALLUCINATIONS.has(text.toLowerCase()) ? '' : text;
           clearTimeout(timer);
-          cleanup(text);
+          cleanup(cleaned);
           return;
         }
       }
     });
 
-    socket.on('error', () => {
+    socket.on('error', (err) => {
+      console.error(`[STT] Wyoming Whisper socket error (${host}:${port}):`, err.message);
       clearTimeout(timer);
       cleanup('');
     });

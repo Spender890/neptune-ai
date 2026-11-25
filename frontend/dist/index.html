@@ -990,7 +990,16 @@
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioChunks = [];
-        mediaRecorder = new MediaRecorder(stream);
+        const preferredTypes = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/mp4',
+          'audio/ogg;codecs=opus',
+        ];
+        const chosenMime = typeof MediaRecorder.isTypeSupported === 'function'
+          ? preferredTypes.find((t) => MediaRecorder.isTypeSupported(t))
+          : undefined;
+        mediaRecorder = chosenMime ? new MediaRecorder(stream, { mimeType: chosenMime }) : new MediaRecorder(stream);
 
         mediaRecorder.ondataavailable = (event) => {
           if (event.data && event.data.size > 0) {
@@ -1000,11 +1009,11 @@
 
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(t => t.stop());
-          const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || chosenMime || 'audio/webm' });
           await processRecordedAudio(audioBlob);
         };
 
-        mediaRecorder.start();
+        mediaRecorder.start(250);
         isRecordingAudio = true;
         pttBtn.classList.add('recording');
         micStatus.textContent = "🎙️ Listening... (Tap mic again to send to Neptune)";
@@ -1027,11 +1036,23 @@
     }
 
     async function processRecordedAudio(blob) {
+      if (!blob || blob.size < 100) {
+        resText.textContent = "No audio captured. Hold or speak slightly longer and try again.";
+        micStatus.textContent = "Tap microphone to speak or type command below";
+        return;
+      }
+
       const start = performance.now();
       const reader = new FileReader();
       reader.readAsDataURL(blob);
       reader.onloadend = async () => {
-        const base64Audio = reader.result.split(',')[1];
+        const resultStr = typeof reader.result === 'string' ? reader.result : '';
+        const base64Audio = resultStr.includes(',') ? resultStr.split(',')[1] : '';
+        if (!base64Audio) {
+          resText.textContent = "Error: Failed to read recorded audio.";
+          micStatus.textContent = "Tap microphone to speak or type command below";
+          return;
+        }
         try {
           const res = await apiFetch('/api/voice/interact', {
             method: 'POST',
@@ -1041,10 +1062,14 @@
           const data = await res.json();
           const duration = Math.round(performance.now() - start);
 
-          if (data.transcription) {
-            cmdInput.value = data.transcription;
+          if (!res.ok || data.error) {
+            resText.textContent = data.speech || data.error || `Voice error (HTTP ${res.status})`;
+          } else {
+            if (data.transcription) {
+              cmdInput.value = data.transcription;
+            }
+            resText.textContent = (data.transcription ? `"${data.transcription}" → ` : '') + (data.speech || "Done.");
           }
-          resText.textContent = (data.transcription ? `"${data.transcription}" → ` : '') + (data.speech || "Done.");
           resLatency.textContent = (data.latency_ms ?? duration) + " ms";
           micStatus.textContent = "Tap microphone to speak or type command below";
 

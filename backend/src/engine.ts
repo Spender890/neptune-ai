@@ -488,7 +488,7 @@ export class NeptuneEngine {
     const callerId = typeof body?.caller_id === 'string' ? body.caller_id : undefined;
     let callerName = typeof body?.caller_name === 'string' ? body.caller_name : undefined;
 
-    if (!callerName && callerId) {
+    if ((!callerName || callerName === 'Caller') && callerId) {
       const contact = getContactByExtension(callerId);
       callerName = contact ? contact.name : `Extension ${callerId}`;
     }

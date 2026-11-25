@@ -29,11 +29,11 @@ function sanitizeCallHeaderField(value: string, maxLen: number): string {
  */
 export class TelephonyManager {
   private spoolDir: string;
-  private directory: Contact[];
+  private directory?: Contact[];
 
   constructor(
     spoolDir: string = process.env.ASTERISK_SPOOL_DIR || '/var/spool/asterisk/outgoing',
-    directory: Contact[] = CONTACT_DIRECTORY
+    directory?: Contact[]
   ) {
     this.spoolDir = spoolDir;
     this.directory = directory;
@@ -59,7 +59,8 @@ export class TelephonyManager {
       };
     }
 
-    const contact = resolveContact(req.recipientQuery, this.directory);
+    const activeDirectory = this.directory ?? CONTACT_DIRECTORY;
+    const contact = resolveContact(req.recipientQuery, activeDirectory);
     let targetExt = '';
 
     if (contact && /^[0-9]{3,6}$/.test(contact.extension) && !EMERGENCY_NUMBERS.has(contact.extension)) {

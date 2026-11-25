@@ -13,7 +13,8 @@
     "media_player.vlc_telnet",
     "tts.google_translate_en_com",
     "timer.neptune_timer",
-    "asterisk.pbx"
+    "asterisk.pbx",
+    "intercom.*"
   ],
   "allowed_domains": [
     "light",
@@ -25,7 +26,8 @@
     "sensor",
     "binary_sensor",
     "tts",
-    "asterisk"
+    "asterisk",
+    "intercom"
   ],
   "consequential_entities": [
     "lock.front_door",

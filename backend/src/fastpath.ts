@@ -92,9 +92,9 @@ export class FastPathRouter {
       };
     }
 
-    // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock front door", "open gate", "open both doors")
+    // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock front door", "open garage", "open gate", "open both doors")
     const doorUnlockMatch = clean.match(
-      /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(both\s+doors|all\s+doors|front\s+door|gate|side\s+door|back\s+door|door\s*1|door\s*2|door)$/
+      /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(both\s+doors|all\s+doors|front\s+door|garage\s+door|garage|gate|side\s+door|back\s+door|door\s*1|door\s*2|door)$/
     );
     if (doorUnlockMatch) {
       const rawTarget = doorUnlockMatch[1].trim();
@@ -103,6 +103,9 @@ export class FastPathRouter {
       if (rawTarget.includes('both') || rawTarget.includes('all')) {
         target = 'all';
         speech = 'Opening both doors.';
+      } else if (rawTarget.includes('garage')) {
+        target = 'door2';
+        speech = 'Opening the garage.';
       } else if (rawTarget.includes('gate') || rawTarget.includes('side') || rawTarget.includes('back') || rawTarget.includes('2')) {
         target = 'door2';
         speech = 'Opening the gate.';

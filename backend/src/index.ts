@@ -257,6 +257,7 @@ export function createServer(engine: NeptuneEngine = new NeptuneEngine()): {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const Fastify = require('fastify') as (opts?: Record<string, unknown>) => FastifyInstance;
   const fastify: FastifyInstance = Fastify({
+    bodyLimit: 10 * 1024 * 1024,
     logger: {
       level: process.env.LOG_LEVEL || 'info',
     },
