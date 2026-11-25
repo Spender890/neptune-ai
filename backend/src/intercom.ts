@@ -88,7 +88,10 @@ export class IntercomManager {
   ) {
     const door1Name = process.env.DOOR1_NAME || process.env.HIKVISION_DOOR1_NAME || 'Front Door';
     const door1Entity =
-      process.env.DOOR1_ENTITY_ID || process.env.HIKVISION_DOOR1_ENTITY || process.env.DOOR_ENTITY_ID || 'lock.front_door';
+      process.env.DOOR1_ENTITY_ID ||
+      process.env.HIKVISION_DOOR1_ENTITY ||
+      process.env.DOOR_ENTITY_ID ||
+      'button.front_entry_door_open_door_1';
     const door1Service = process.env.DOOR1_SERVICE || '';
 
     const door2Name = process.env.DOOR2_NAME || process.env.HIKVISION_DOOR2_NAME || 'Garage';
