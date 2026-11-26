@@ -4,10 +4,11 @@ set -e
 AIRPLAY_NAME=$(jq -r '.airplay_name // "Home Speakers"' /data/options.json)
 VERBOSE=$(jq -r '.verbose // false' /data/options.json)
 
-set -- -a "$AIRPLAY_NAME" -o pa
+set -- -a "$AIRPLAY_NAME" -o alsa
 if [ "$VERBOSE" = "true" ]; then
   set -- "$@" -v
 fi
+set -- "$@" -- -d default
 
 if [ -x /start.sh ]; then
   exec /start.sh "$@"

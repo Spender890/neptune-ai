@@ -1,6 +1,6 @@
 name: "Shairport Sync (AirPlay 2)"
 description: "AirPlay 2 receiver for whole-house speakers using Home Assistant Audio"
-version: "1.0.0"
+version: "1.0.1"
 slug: "shairport_sync"
 init: false
 arch:
