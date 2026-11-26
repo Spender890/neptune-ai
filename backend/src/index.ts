@@ -195,11 +195,29 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
 
   fastify.post(
     '/api/adhan/test',
-    async (request: FastifyRequest<{ Body: { prayer?: string } }>, reply: FastifyReply) => {
+    async (request: FastifyRequest<{ Body: { prayer?: string; volume?: number } }>, reply: FastifyReply) => {
       const prayer = request.body?.prayer || 'maghrib';
+      const volume = typeof request.body?.volume === 'number' ? request.body.volume : undefined;
       const host = request.headers.host;
       const origin = host ? `http://${host.split(':')[0]}` : undefined;
-      const res = await engine.triggerAdhan(prayer, origin);
+      const res = await engine.triggerAdhan(prayer, origin, volume);
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.post(
+    '/api/adhan/volume',
+    async (
+      request: FastifyRequest<{ Body: { level?: number; volume?: number; kind?: 'default' | 'fajr' } }>,
+      reply: FastifyReply
+    ) => {
+      const rawLevel = request.body?.level ?? request.body?.volume;
+      const numLevel = typeof rawLevel === 'number' ? rawLevel : Number(rawLevel);
+      if (!Number.isFinite(numLevel)) {
+        return reply.status(400).send({ error: 'Numeric volume level is required.' });
+      }
+      const kind = request.body?.kind === 'fajr' ? 'fajr' : 'default';
+      const res = await engine.setAdhanSpeakerVolume(numLevel, kind);
       return reply.status(res.statusCode).send(res.body);
     }
   );

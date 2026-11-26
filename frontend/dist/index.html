@@ -864,11 +864,11 @@
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.55rem;">
         <div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Speaker Vol: <span id="adhan-vol-label">70%</span></div>
-          <input type="range" id="adhan-vol-slider" min="10" max="100" value="70" style="width: 100%;" oninput="document.getElementById('adhan-vol-label').textContent = this.value + '%'" />
+          <input type="range" id="adhan-vol-slider" min="0" max="100" step="1" value="70" style="width: 100%;" oninput="onAdhanVolumeInput('default', this.value)" onchange="onAdhanVolumeCommit('default', this.value)" />
         </div>
         <div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Fajr Vol: <span id="adhan-fajr-vol-label">45%</span></div>
-          <input type="range" id="adhan-fajr-vol-slider" min="10" max="100" value="45" style="width: 100%;" oninput="document.getElementById('adhan-fajr-vol-label').textContent = this.value + '%'" />
+          <input type="range" id="adhan-fajr-vol-slider" min="0" max="100" step="1" value="45" style="width: 100%;" oninput="onAdhanVolumeInput('fajr', this.value)" onchange="onAdhanVolumeCommit('fajr', this.value)" />
         </div>
       </div>
 
@@ -1959,12 +1959,54 @@
       reader.readAsDataURL(file);
     }
 
+    let adhanVolTimer = null;
+
+    function updateAdhanVolumeLabel(kind, value) {
+      const lblId = kind === 'fajr' ? 'adhan-fajr-vol-label' : 'adhan-vol-label';
+      const lbl = document.getElementById(lblId);
+      if (lbl) lbl.textContent = `${value}%`;
+    }
+
+    async function sendAdhanSpeakerVolume(kind, value) {
+      try {
+        const res = await apiFetch('/api/adhan/volume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, level: Number(value) })
+        });
+        const data = await res.json();
+        if (data && data.speech) {
+          resText.textContent = data.speech;
+        }
+      } catch (e) {
+        // Soft ignore during rapid drag
+      }
+    }
+
+    function onAdhanVolumeInput(kind, value) {
+      updateAdhanVolumeLabel(kind, value);
+      if (adhanVolTimer) clearTimeout(adhanVolTimer);
+      adhanVolTimer = setTimeout(() => {
+        sendAdhanSpeakerVolume(kind, value);
+      }, 150);
+    }
+
+    function onAdhanVolumeCommit(kind, value) {
+      updateAdhanVolumeLabel(kind, value);
+      if (adhanVolTimer) {
+        clearTimeout(adhanVolTimer);
+        adhanVolTimer = null;
+      }
+      void sendAdhanSpeakerVolume(kind, value);
+    }
+
     async function testAdhanPlayback() {
-      resText.textContent = 'Testing Adhan on whole-house speakers and TV...';
+      const currentVol = Number(document.getElementById('adhan-vol-slider')?.value ?? 70);
+      resText.textContent = `Testing Adhan on whole-house speakers (${currentVol}% vol) and TV...`;
       const res = await apiFetch('/api/adhan/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prayer: 'maghrib' })
+        body: JSON.stringify({ prayer: 'maghrib', volume: currentVol })
       });
       const data = await res.json();
       resText.textContent = data.speech || 'Adhan triggered.';

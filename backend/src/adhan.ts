@@ -448,7 +448,8 @@ function parseFloatEnv(val: string | undefined, fallback: number): number {
 function clampVolume(val: unknown, fallback: number): number {
   const num = typeof val === 'number' ? val : Number(val);
   if (!Number.isFinite(num)) return fallback;
-  return Math.max(0, Math.min(1, Math.round(num * 100) / 100));
+  const scaled = num > 1 ? num / 100 : num;
+  return Math.max(0, Math.min(1, Math.round(scaled * 100) / 100));
 }
 
 export class AdhanManager {
@@ -459,6 +460,7 @@ export class AdhanManager {
   private speakerEntityId: string;
   private config: AdhanConfig;
   private timer: NodeJS.Timeout | null = null;
+  private pendingVolumeTimers: NodeJS.Timeout[] = [];
   private isTicking = false;
   private lastTriggered: Record<string, number> = {};
 
@@ -774,9 +776,80 @@ export class AdhanManager {
     return this.config.audioUrl || localUrl('adhan.mp3');
   }
 
+  private clearPendingVolumeTimers(): void {
+    for (const t of this.pendingVolumeTimers) {
+      clearTimeout(t);
+    }
+    this.pendingVolumeTimers = [];
+  }
+
+  private async applySpeakerVolume(volumeLevel: number): Promise<{ success: boolean; details: string }> {
+    if (!this.haClient) {
+      return { success: false, details: 'Home Assistant client is not configured.' };
+    }
+    const clamped = clampVolume(volumeLevel, 0.7);
+    try {
+      const res = await this.haClient.callService('media_player', 'volume_set', this.speakerEntityId, {
+        volume_level: clamped,
+      });
+      return { success: res.success, details: res.message };
+    } catch (err: unknown) {
+      return { success: false, details: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private schedulePostStartVolume(volumeLevel: number): void {
+    this.clearPendingVolumeTimers();
+    for (const delayMs of [500, 1500]) {
+      const t = setTimeout(() => {
+        void this.applySpeakerVolume(volumeLevel);
+      }, delayMs);
+      if (typeof t.unref === 'function') {
+        t.unref();
+      }
+      this.pendingVolumeTimers.push(t);
+    }
+  }
+
+  public async setSpeakerVolume(
+    levelInput: number,
+    kind: 'default' | 'fajr' = 'default'
+  ): Promise<{
+    success: boolean;
+    kind: 'default' | 'fajr';
+    volume: number;
+    volumePercent: number;
+    speech: string;
+    details: string;
+  }> {
+    const fallback = kind === 'fajr' ? this.config.fajrVolume : this.config.volume;
+    const normalized = clampVolume(levelInput, fallback);
+    this.clearPendingVolumeTimers();
+
+    if (kind === 'fajr') {
+      this.config.fajrVolume = normalized;
+    } else {
+      this.config.volume = normalized;
+    }
+    this.persistConfig();
+
+    const pct = Math.round(normalized * 100);
+    const haRes = await this.applySpeakerVolume(normalized);
+    return {
+      success: haRes.success,
+      kind,
+      volume: normalized,
+      volumePercent: pct,
+      speech: haRes.success
+        ? `Set home speaker ${kind === 'fajr' ? 'Fajr ' : ''}volume to ${pct}%.`
+        : `Saved ${pct}%, but could not reach Home Assistant speakers.`,
+      details: haRes.details,
+    };
+  }
+
   public async triggerAdhan(
     prayerInput: string = 'maghrib',
-    opts: { requestOrigin?: string; timeStr?: string } = {}
+    opts: { requestOrigin?: string; timeStr?: string; volume?: number } = {}
   ): Promise<AdhanTriggerResult> {
     const cleanKey = prayerInput.trim().toLowerCase() as AdhanPrayerKey;
     const prayer: AdhanPrayerKey = PRAYER_LABELS[cleanKey] ? cleanKey : 'maghrib';
@@ -806,14 +879,19 @@ export class AdhanManager {
       };
     }
 
-    const targetVolume = prayer === 'fajr' ? this.config.fajrVolume : this.config.volume;
-    try {
-      await this.haClient.callService('media_player', 'volume_set', this.speakerEntityId, {
-        volume_level: targetVolume,
-      });
-    } catch (err) {
-      console.warn('[AdhanManager] Volume adjustment skipped:', err);
+    let targetVolume = prayer === 'fajr' ? this.config.fajrVolume : this.config.volume;
+    if (opts.volume !== undefined && Number.isFinite(Number(opts.volume))) {
+      targetVolume = clampVolume(opts.volume, targetVolume);
+      if (prayer === 'fajr') {
+        this.config.fajrVolume = targetVolume;
+      } else {
+        this.config.volume = targetVolume;
+      }
+      this.persistConfig();
     }
+
+    this.clearPendingVolumeTimers();
+    await this.applySpeakerVolume(targetVolume);
 
     const audioUrl = this.resolveAudioUrl(prayer, opts.requestOrigin);
     if (audioUrl) {
@@ -823,6 +901,7 @@ export class AdhanManager {
           media_content_type: 'music',
         });
         if (playRes.success) {
+          this.schedulePostStartVolume(targetVolume);
           return {
             success: true,
             prayer,
@@ -830,7 +909,7 @@ export class AdhanManager {
             method: 'media_player',
             audioUrl,
             tvToastSent,
-            speech: `Playing ${label} Adhan on whole-house speakers.`,
+            speech: `Playing ${label} Adhan on whole-house speakers (${Math.round(targetVolume * 100)}% vol).`,
             details: playRes.message,
           };
         }
@@ -846,6 +925,9 @@ export class AdhanManager {
         media_player_entity_id: this.speakerEntityId,
         message: ttsMessage,
       });
+      if (ttsRes.success) {
+        this.schedulePostStartVolume(targetVolume);
+      }
       return {
         success: ttsRes.success,
         prayer,
@@ -871,6 +953,7 @@ export class AdhanManager {
   }
 
   public async stopAdhan(): Promise<{ success: boolean; speech: string; details: string }> {
+    this.clearPendingVolumeTimers();
     if (!this.haClient) {
       return { success: false, speech: 'Home Assistant client is not configured.', details: 'No HA client.' };
     }
@@ -931,6 +1014,7 @@ export class AdhanManager {
   }
 
   public stop(): void {
+    this.clearPendingVolumeTimers();
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

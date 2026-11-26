@@ -372,8 +372,13 @@ export class NeptuneEngine {
     return { statusCode: 200, body: { success: true, status: this.adhanManager.getStatus(), config } };
   }
 
-  public async triggerAdhan(prayer: string = 'maghrib', requestOrigin?: string) {
-    const res = await this.adhanManager.triggerAdhan(prayer, { requestOrigin });
+  public async triggerAdhan(prayer: string = 'maghrib', requestOrigin?: string, volume?: number) {
+    const res = await this.adhanManager.triggerAdhan(prayer, { requestOrigin, volume });
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async setAdhanSpeakerVolume(level: number, kind: 'default' | 'fajr' = 'default') {
+    const res = await this.adhanManager.setSpeakerVolume(level, kind);
     return { statusCode: res.success ? 200 : 500, body: res };
   }
 
