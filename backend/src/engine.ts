@@ -11,6 +11,7 @@ import { AgendaDaemon } from './agenda';
 import { TelephonyManager } from './telephony';
 import { CONTACT_DIRECTORY, getContactByExtension, addContact, removeContact, reloadContacts } from './contacts';
 import { IntercomManager, type DoorUnlockResult } from './intercom';
+import { AdhanManager, type AdhanConfig } from './adhan';
 import { synthesizeSpeechWyoming, transcribeAudioWyoming } from './speech';
 
 export interface NeptuneConfig {
@@ -43,6 +44,7 @@ export interface NeptuneDependencies {
   agendaDaemon?: AgendaDaemon;
   telephonyManager?: TelephonyManager;
   intercomManager?: IntercomManager;
+  adhanManager?: AdhanManager;
 }
 
 export const VALID_SOUND_OUTPUTS = [
@@ -210,6 +212,7 @@ export class NeptuneEngine {
   public readonly agendaDaemon: AgendaDaemon;
   public readonly telephonyManager: TelephonyManager;
   public readonly intercomManager: IntercomManager;
+  public readonly adhanManager: AdhanManager;
 
   constructor(deps: NeptuneDependencies = {}) {
     this.config = loadConfigFromEnv(deps.config);
@@ -227,6 +230,9 @@ export class NeptuneEngine {
     this.intercomManager =
       deps.intercomManager ||
       new IntercomManager({}, this.haClient, this.webOSManager, this.telephonyManager, this.config.speakerEntity);
+    this.adhanManager =
+      deps.adhanManager ||
+      new AdhanManager(this.config.dataDir, this.haClient, this.webOSManager, this.config.speakerEntity);
   }
 
   public getHealth(): Record<string, unknown> {
@@ -355,6 +361,34 @@ export class NeptuneEngine {
   public async handleDoorbellRing(door: string = 'door1', source?: string) {
     const res = await this.intercomManager.handleDoorbellRing(door, source);
     return { statusCode: 200, body: res };
+  }
+
+  public getAdhanStatus() {
+    return this.adhanManager.getStatus();
+  }
+
+  public updateAdhanConfig(patch: Partial<AdhanConfig>) {
+    const config = this.adhanManager.updateConfig(patch || {});
+    return { statusCode: 200, body: { success: true, status: this.adhanManager.getStatus(), config } };
+  }
+
+  public async triggerAdhan(prayer: string = 'maghrib', requestOrigin?: string) {
+    const res = await this.adhanManager.triggerAdhan(prayer, { requestOrigin });
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public async stopAdhan() {
+    const res = await this.adhanManager.stopAdhan();
+    return { statusCode: res.success ? 200 : 500, body: res };
+  }
+
+  public uploadAdhanAudio(kind: 'default' | 'fajr', audioBase64: string) {
+    const res = this.adhanManager.saveAudioFile(kind, audioBase64);
+    return { statusCode: res.success ? 200 : 400, body: res };
+  }
+
+  public getAdhanAudioFile(filename: string): string | null {
+    return this.adhanManager.getAudioFilePath(filename);
   }
 
   public async handleVoiceInteract(audioBase64?: string, text?: string): Promise<{
@@ -532,6 +566,50 @@ export class NeptuneEngine {
             requires_confirmation: true,
             success: false,
             action: fpResult,
+          },
+        };
+      }
+
+      // 0B. Adhan & Prayer Times
+      if (fpResult.intent === 'adhan_query') {
+        const prayerArg = typeof fpResult.data?.prayer === 'string' ? fpResult.data.prayer : undefined;
+        const speech = this.adhanManager.formatPrayerQuerySpeech(prayerArg);
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-adhan-query',
+            latency_ms: Date.now() - startTime,
+            speech,
+            success: true,
+            adhan: this.adhanManager.getSchedule(),
+          },
+        };
+      }
+
+      if (fpResult.intent === 'adhan_play') {
+        const nextKey = this.adhanManager.getSchedule().nextPrayer.key;
+        const adhanRes = await this.adhanManager.triggerAdhan(nextKey);
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-adhan-play',
+            latency_ms: Date.now() - startTime,
+            speech: adhanRes.speech,
+            success: adhanRes.success,
+            adhan_action: adhanRes,
+          },
+        };
+      }
+
+      if (fpResult.intent === 'adhan_stop') {
+        const stopRes = await this.adhanManager.stopAdhan();
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-adhan-stop',
+            latency_ms: Date.now() - startTime,
+            speech: stopRes.speech,
+            success: stopRes.success,
           },
         };
       }

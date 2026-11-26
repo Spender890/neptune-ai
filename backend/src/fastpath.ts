@@ -92,6 +92,66 @@ export class FastPathRouter {
       };
     }
 
+    // 1B. ADHAN & PRAYER TIMES ("when is the next prayer", "prayer times", "when is maghrib", "play adhan", "stop adhan")
+    const stopAdhanMatch = clean.match(/^(?:please\s+)?stop\s+(?:the\s+)?(?:adhan|azan|azaan)$/);
+    if (stopAdhanMatch) {
+      return {
+        matched: true,
+        intent: 'adhan_stop',
+        domain: 'adhan',
+        service: 'stop',
+        entity_id: 'adhan.scheduler',
+        confirmation_speech: 'Stopping Adhan playback.',
+        requires_confirmation: false,
+      };
+    }
+
+    const playAdhanMatch = clean.match(/^(?:please\s+)?(?:play|announce|test)\s+(?:the\s+)?(?:adhan|azan|azaan)$/);
+    if (playAdhanMatch) {
+      return {
+        matched: true,
+        intent: 'adhan_play',
+        domain: 'adhan',
+        service: 'play',
+        entity_id: 'adhan.scheduler',
+        confirmation_speech: 'Playing Adhan on whole-house speakers.',
+        requires_confirmation: false,
+      };
+    }
+
+    const nextPrayerMatch = clean.match(
+      /^(?:please\s+)?(?:(?:when|what)\s+is\s+(?:the\s+)?(?:next\s+)?(?:prayer|salah|salat|adhan|azan)|next\s+prayer|prayer\s+times?|adhan\s+times?|azan\s+times?|today'?s?\s+prayer\s+times?)$/
+    );
+    if (nextPrayerMatch) {
+      const mode = clean.includes('times') || clean.includes('today') ? 'all' : 'next';
+      return {
+        matched: true,
+        intent: 'adhan_query',
+        domain: 'adhan',
+        service: 'query',
+        entity_id: 'adhan.scheduler',
+        data: { prayer: mode },
+        confirmation_speech: 'Checking prayer times.',
+        requires_confirmation: false,
+      };
+    }
+
+    const specificPrayerMatch = clean.match(
+      /^(?:please\s+)?(?:when\s+is|what\s+time\s+is)\s+(?:the\s+)?(fajr|fajar|dhuhr|zuhr|asr|maghrib|magrib|isha|esha)(?:\s+prayer|\s+adhan|\s+azan|\s+time)?$/
+    );
+    if (specificPrayerMatch) {
+      return {
+        matched: true,
+        intent: 'adhan_query',
+        domain: 'adhan',
+        service: 'query',
+        entity_id: 'adhan.scheduler',
+        data: { prayer: specificPrayerMatch[1] },
+        confirmation_speech: 'Checking prayer time.',
+        requires_confirmation: false,
+      };
+    }
+
     // 2. INTERCOM DOOR RELAY UNLOCK ("open the door", "unlock front door", "open garage", "open gate", "open both doors")
     const doorUnlockMatch = clean.match(
       /^(?:please\s+)?(?:open|unlock)\s+(?:the\s+)?(both\s+doors|all\s+doors|front\s+door|garage\s+door|garage|gate|side\s+door|back\s+door|door\s*1|door\s*2|door)$/

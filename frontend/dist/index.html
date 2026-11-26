@@ -532,6 +532,38 @@
       background: var(--success);
       margin-right: 6px;
     }
+    .adhan-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+      margin-bottom: 0.85rem;
+    }
+    .adhan-cell {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 0.55rem 0.6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+    .adhan-cell.is-next {
+      border-color: var(--accent);
+      background: rgba(0, 210, 255, 0.12);
+    }
+    .adhan-cell-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .adhan-cell-time {
+      font-size: 1rem;
+      font-weight: 700;
+      font-family: monospace;
+      color: var(--text-main);
+    }
   </style>
 </head>
 <body>
@@ -771,6 +803,94 @@
         <div class="chip" onclick="sendCommand('broadcast dinner is ready, please come downstairs!')">Dinner Ready</div>
         <div class="chip" onclick="sendCommand('broadcast family meeting in the living room now')">Family Meeting</div>
         <div class="chip" onclick="sendCommand('broadcast someone is at the front door')">Front Door</div>
+      </div>
+    </div>
+
+    <!-- Adhan & Prayer Times Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>&#128332; Adhan &amp; Prayer Times</span>
+        <span id="adhan-next-pill" class="tv-pill pill-playing">LOADING...</span>
+      </div>
+
+      <div id="adhan-schedule-grid" class="adhan-grid">
+        <div style="grid-column: 1 / -1; color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 0.8rem;">Loading prayer schedule...</div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.65rem; font-size: 0.82rem; color: #cbd5e1; flex-wrap: wrap;">
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="adhan-enabled-chk" checked />
+          <span>Auto-Announce Adhan</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="adhan-tv-toast-chk" checked />
+          <span>LG TV Banner</span>
+        </label>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.55rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">City Preset:</div>
+          <select id="adhan-city-select" class="select-input" style="width: 100%; padding: 0.45rem 0.6rem; font-size: 0.8rem;" onchange="onAdhanCityChange()">
+            <option value="dubai">Dubai, UAE</option>
+            <option value="abu_dhabi">Abu Dhabi, UAE</option>
+            <option value="sharjah">Sharjah, UAE</option>
+            <option value="al_ain">Al Ain, UAE</option>
+            <option value="muscat">Muscat, Oman</option>
+            <option value="riyadh">Riyadh, Saudi Arabia</option>
+            <option value="makkah">Makkah, Saudi Arabia</option>
+            <option value="custom">Custom Coordinates</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Calculation Method:</div>
+          <select id="adhan-method-select" class="select-input" style="width: 100%; padding: 0.45rem 0.6rem; font-size: 0.8rem;">
+            <option value="uae">UAE / Dubai (AWQAF)</option>
+            <option value="umm_al_qura">Umm al-Qura (Makkah)</option>
+            <option value="mwl">Muslim World League</option>
+            <option value="egypt">Egyptian Authority</option>
+            <option value="isna">ISNA North America</option>
+            <option value="karachi">Karachi</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="adhan-custom-coords" style="display: none; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; margin-bottom: 0.55rem;">
+        <input type="number" step="0.0001" id="adhan-lat-input" class="text-input" style="padding: 0.4rem 0.55rem; font-size: 0.78rem;" placeholder="Lat" />
+        <input type="number" step="0.0001" id="adhan-lon-input" class="text-input" style="padding: 0.4rem 0.55rem; font-size: 0.78rem;" placeholder="Lon" />
+        <input type="text" id="adhan-tz-input" class="text-input" style="padding: 0.4rem 0.55rem; font-size: 0.78rem;" placeholder="Asia/Dubai" />
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.55rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Speaker Vol: <span id="adhan-vol-label">70%</span></div>
+          <input type="range" id="adhan-vol-slider" min="10" max="100" value="70" style="width: 100%;" oninput="document.getElementById('adhan-vol-label').textContent = this.value + '%'" />
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Fajr Vol: <span id="adhan-fajr-vol-label">45%</span></div>
+          <input type="range" id="adhan-fajr-vol-slider" min="10" max="100" value="45" style="width: 100%;" oninput="document.getElementById('adhan-fajr-vol-label').textContent = this.value + '%'" />
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem;">
+        <input type="text" id="adhan-lan-url-input" class="text-input" style="padding: 0.45rem 0.65rem; font-size: 0.78rem;" placeholder="Neptune LAN URL (e.g. http://192.168.1.16)" />
+        <input type="text" id="adhan-audio-url-input" class="text-input" style="padding: 0.45rem 0.65rem; font-size: 0.78rem;" placeholder="Optional Adhan MP3 URL (leave blank to use uploaded MP3 or TTS)" />
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;">
+          <label class="ctrl-btn" style="flex: 1; text-align: center; cursor: pointer; font-size: 0.75rem;">
+            <span id="adhan-upload-default-lbl">&#128193; Upload Adhan MP3</span>
+            <input type="file" id="adhan-file-default" accept="audio/*,.mp3" style="display: none;" onchange="uploadAdhanMp3('default', this)" />
+          </label>
+          <label class="ctrl-btn" style="flex: 1; text-align: center; cursor: pointer; font-size: 0.75rem;">
+            <span id="adhan-upload-fajr-lbl">&#127749; Upload Fajr MP3</span>
+            <input type="file" id="adhan-file-fajr" accept="audio/*,.mp3" style="display: none;" onchange="uploadAdhanMp3('fajr', this)" />
+          </label>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem;">
+        <button class="btn-send" onclick="saveAdhanConfig()" style="flex: 1; padding: 0.55rem;">Save Settings</button>
+        <button class="ctrl-btn" onclick="testAdhanPlayback()" style="flex: 1; font-weight: 600; color: #10b981; border-color: rgba(16, 185, 129, 0.35);">&#128266; Test Adhan</button>
+        <button class="ctrl-btn" onclick="stopAdhanPlayback()" style="padding: 0.55rem 0.8rem; color: #ef4444; border-color: rgba(239, 68, 68, 0.35);">&#9209; Stop</button>
       </div>
     </div>
 
@@ -1648,14 +1768,224 @@
       });
     }
 
+    // ==========================================
+    // 7. ADHAN & PRAYER TIMES
+    // ==========================================
+    let adhanConfigDirty = false;
+    let cachedAdhanPrayers = { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true };
+    let cachedAdhanPresets = {};
+
+    function onAdhanCityChange() {
+      const cityEl = document.getElementById('adhan-city-select');
+      const customBox = document.getElementById('adhan-custom-coords');
+      const methodEl = document.getElementById('adhan-method-select');
+      const val = cityEl ? cityEl.value : 'dubai';
+      if (customBox) {
+        customBox.style.display = val === 'custom' ? 'grid' : 'none';
+      }
+      const preset = cachedAdhanPresets[val];
+      if (preset && methodEl) {
+        methodEl.value = preset.method;
+      }
+    }
+
+    async function fetchAdhanStatus(forceFormSync = false) {
+      try {
+        const res = await apiFetch('/api/adhan/status');
+        const data = await res.json();
+        if (!data || !Array.isArray(data.schedule)) return;
+
+        if (Array.isArray(data.presets)) {
+          for (const p of data.presets) {
+            cachedAdhanPresets[p.id] = p;
+          }
+        }
+
+        const pill = document.getElementById('adhan-next-pill');
+        if (pill && data.nextPrayer) {
+          pill.textContent = `NEXT: ${data.nextPrayer.label.toUpperCase()} ${data.nextPrayer.time} (${data.nextPrayer.countdown})`;
+        }
+
+        if (data.config && data.config.prayers) {
+          cachedAdhanPrayers = { ...data.config.prayers };
+        }
+
+        const grid = document.getElementById('adhan-schedule-grid');
+        if (grid) {
+          let html = '';
+          for (const item of data.schedule) {
+            const safeKey = escapeHtml(item.key);
+            const safeLabel = escapeHtml(item.label);
+            const safeTime = escapeHtml(item.time);
+            const nextCls = item.isNext ? ' is-next' : '';
+            const toggleHtml = item.key !== 'sunrise'
+              ? `<input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleSinglePrayer('${safeKey}', this.checked)" title="Toggle ${safeLabel} Adhan" />`
+              : `<span style="font-size:0.65rem;color:#fbbf24;">&#9728;</span>`;
+            html += `
+              <div class="adhan-cell${nextCls}">
+                <div class="adhan-cell-top">
+                  <span>${safeLabel}</span>
+                  ${toggleHtml}
+                </div>
+                <div class="adhan-cell-time">${safeTime}</div>
+              </div>
+            `;
+          }
+          grid.innerHTML = html;
+        }
+
+        const defLbl = document.getElementById('adhan-upload-default-lbl');
+        if (defLbl) {
+          defLbl.textContent = data.hasDefaultAudio ? '✅ Adhan MP3 Uploaded' : '📁 Upload Adhan MP3';
+        }
+        const fajrLbl = document.getElementById('adhan-upload-fajr-lbl');
+        if (fajrLbl) {
+          fajrLbl.textContent = data.hasFajrAudio ? '✅ Fajr MP3 Uploaded' : '🌅 Upload Fajr MP3';
+        }
+
+        if (data.config && (!adhanConfigDirty || forceFormSync)) {
+          const cfg = data.config;
+          const enChk = document.getElementById('adhan-enabled-chk');
+          const tvChk = document.getElementById('adhan-tv-toast-chk');
+          const citySel = document.getElementById('adhan-city-select');
+          const methodSel = document.getElementById('adhan-method-select');
+          const latIn = document.getElementById('adhan-lat-input');
+          const lonIn = document.getElementById('adhan-lon-input');
+          const tzIn = document.getElementById('adhan-tz-input');
+          const volSlider = document.getElementById('adhan-vol-slider');
+          const volLbl = document.getElementById('adhan-vol-label');
+          const fVolSlider = document.getElementById('adhan-fajr-vol-slider');
+          const fVolLbl = document.getElementById('adhan-fajr-vol-label');
+          const lanIn = document.getElementById('adhan-lan-url-input');
+          const audioIn = document.getElementById('adhan-audio-url-input');
+
+          if (enChk) enChk.checked = Boolean(cfg.enabled);
+          if (tvChk) tvChk.checked = Boolean(cfg.tvToast);
+          if (citySel) {
+            citySel.value = cfg.city || 'dubai';
+            onAdhanCityChange();
+          }
+          if (methodSel && cfg.method) methodSel.value = cfg.method;
+          if (latIn) latIn.value = cfg.latitude;
+          if (lonIn) lonIn.value = cfg.longitude;
+          if (tzIn) tzIn.value = cfg.timezone || 'Asia/Dubai';
+          const vPct = Math.round((cfg.volume ?? 0.7) * 100);
+          const fvPct = Math.round((cfg.fajrVolume ?? 0.45) * 100);
+          if (volSlider) volSlider.value = vPct;
+          if (volLbl) volLbl.textContent = `${vPct}%`;
+          if (fVolSlider) fVolSlider.value = fvPct;
+          if (fVolLbl) fVolLbl.textContent = `${fvPct}%`;
+          if (lanIn) lanIn.value = cfg.lanBaseUrl || `http://${window.location.hostname}`;
+          if (audioIn) audioIn.value = cfg.audioUrl || '';
+          adhanConfigDirty = true;
+        }
+      } catch (e) {
+        // Soft ignore
+      }
+    }
+
+    async function toggleSinglePrayer(key, enabled) {
+      cachedAdhanPrayers[key] = Boolean(enabled);
+      await apiFetch('/api/adhan/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prayers: cachedAdhanPrayers })
+      });
+      fetchAdhanStatus();
+    }
+
+    async function saveAdhanConfig() {
+      const city = document.getElementById('adhan-city-select')?.value || 'dubai';
+      const payload = {
+        enabled: Boolean(document.getElementById('adhan-enabled-chk')?.checked),
+        tvToast: Boolean(document.getElementById('adhan-tv-toast-chk')?.checked),
+        city,
+        method: document.getElementById('adhan-method-select')?.value || 'uae',
+        volume: Number(document.getElementById('adhan-vol-slider')?.value || 70) / 100,
+        fajrVolume: Number(document.getElementById('adhan-fajr-vol-slider')?.value || 45) / 100,
+        lanBaseUrl: (document.getElementById('adhan-lan-url-input')?.value || '').trim(),
+        audioUrl: (document.getElementById('adhan-audio-url-input')?.value || '').trim(),
+        prayers: cachedAdhanPrayers,
+      };
+      if (city === 'custom') {
+        payload.latitude = parseFloat(document.getElementById('adhan-lat-input')?.value || '25.2048');
+        payload.longitude = parseFloat(document.getElementById('adhan-lon-input')?.value || '55.2708');
+        payload.timezone = (document.getElementById('adhan-tz-input')?.value || 'Asia/Dubai').trim();
+      }
+
+      const res = await apiFetch('/api/adhan/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        resText.textContent = 'Adhan prayer settings saved.';
+        fetchAdhanStatus(true);
+      } else {
+        resText.textContent = 'Failed to save Adhan settings.';
+      }
+    }
+
+    async function uploadAdhanMp3(kind, inputEl) {
+      const file = inputEl?.files?.[0];
+      if (!file) return;
+      if (file.size > 9.5 * 1024 * 1024) {
+        alert('Audio file is too large (max ~9.5 MB).');
+        return;
+      }
+      resText.textContent = `Uploading ${file.name} for ${kind === 'fajr' ? 'Fajr ' : ''}Adhan...`;
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const res = await apiFetch('/api/adhan/audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, audio: reader.result })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          // Ensure LAN URL is saved so VLC-Telnet can reach the uploaded file
+          const lanUrl = (document.getElementById('adhan-lan-url-input')?.value || `http://${window.location.hostname}`).trim();
+          await apiFetch('/api/adhan/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lanBaseUrl: lanUrl })
+          });
+          resText.textContent = `Uploaded ${data.filename} for Adhan playback!`;
+          fetchAdhanStatus();
+        } else {
+          resText.textContent = `Upload failed: ${data.error || 'Unknown error'}`;
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    async function testAdhanPlayback() {
+      resText.textContent = 'Testing Adhan on whole-house speakers and TV...';
+      const res = await apiFetch('/api/adhan/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prayer: 'maghrib' })
+      });
+      const data = await res.json();
+      resText.textContent = data.speech || 'Adhan triggered.';
+    }
+
+    async function stopAdhanPlayback() {
+      const res = await apiFetch('/api/adhan/stop', { method: 'POST' });
+      const data = await res.json();
+      resText.textContent = data.speech || 'Stopped Adhan playback.';
+    }
+
     // Initial polls & recurring refresh
     fetchContacts();
     fetchReminders();
     fetchTVState();
     fetchIntercomStatus();
+    fetchAdhanStatus(true);
     setInterval(fetchReminders, 3000);
     setInterval(fetchTVState, 4000);
     setInterval(fetchIntercomStatus, 3000);
+    setInterval(() => fetchAdhanStatus(false), 30000);
   </script>
 </body>
 </html>

@@ -1,6 +1,8 @@
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import type { FastifyError, FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { NeptuneEngine } from './engine';
+import type { AdhanConfig } from './adhan';
 
 export { NeptuneEngine, TOOL_SCHEMAS, loadConfigFromEnv } from './engine';
 
@@ -45,7 +47,12 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
   if (engine.config.apiKey) {
     fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
       const requestPath = request.url.split('?')[0];
-      if (requestPath === '/api/health' || requestPath === '/api/door/quick-unlock' || requestPath === '/api/intercom/ring') {
+      if (
+        requestPath === '/api/health' ||
+        requestPath === '/api/door/quick-unlock' ||
+        requestPath === '/api/intercom/ring' ||
+        requestPath.startsWith('/api/adhan/audio/')
+      ) {
         return;
       }
       if (!verifyApiKey(request.headers as Record<string, string | string[] | undefined>, engine.config.apiKey)) {
@@ -175,6 +182,54 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
     }
   );
 
+  // Adhan & Prayer Times Scheduler
+  fastify.get('/api/adhan/status', async () => engine.getAdhanStatus());
+
+  fastify.post(
+    '/api/adhan/config',
+    async (request: FastifyRequest<{ Body: Partial<AdhanConfig> }>, reply: FastifyReply) => {
+      const res = engine.updateAdhanConfig(request.body || {});
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.post(
+    '/api/adhan/test',
+    async (request: FastifyRequest<{ Body: { prayer?: string } }>, reply: FastifyReply) => {
+      const prayer = request.body?.prayer || 'maghrib';
+      const host = request.headers.host;
+      const origin = host ? `http://${host.split(':')[0]}` : undefined;
+      const res = await engine.triggerAdhan(prayer, origin);
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.post('/api/adhan/stop', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const res = await engine.stopAdhan();
+    return reply.status(res.statusCode).send(res.body);
+  });
+
+  fastify.post(
+    '/api/adhan/audio',
+    async (request: FastifyRequest<{ Body: { kind?: 'default' | 'fajr'; audio?: string } }>, reply: FastifyReply) => {
+      const kind = request.body?.kind === 'fajr' ? 'fajr' : 'default';
+      const res = engine.uploadAdhanAudio(kind, request.body?.audio || '');
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.get(
+    '/api/adhan/audio/:filename',
+    async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+      const filePath = engine.getAdhanAudioFile(request.params.filename);
+      if (!filePath) {
+        return reply.status(404).send({ error: 'Adhan audio file not found.' });
+      }
+      reply.header('Content-Type', 'audio/mpeg');
+      return reply.send(fs.createReadStream(filePath));
+    }
+  );
+
   // In-Browser Voice Interaction (Whisper STT + Fast-Path/LLM + Piper TTS)
   fastify.post(
     '/api/voice/interact',
@@ -274,6 +329,7 @@ async function start(): Promise<void> {
   const shutdown = async (signal: string) => {
     fastify.log.info(`Received ${signal}, closing gracefully...`);
     engine.agendaDaemon.stop();
+    engine.adhanManager.stop();
     await fastify.close();
     process.exit(0);
   };
@@ -286,10 +342,12 @@ async function start(): Promise<void> {
 
   try {
     engine.agendaDaemon.start(3000);
+    engine.adhanManager.start(15000);
     await fastify.listen({ port, host });
     fastify.log.info(`Neptune-AI Core Backend listening on http://${host}:${port}`);
   } catch (err) {
     engine.agendaDaemon.stop();
+    engine.adhanManager.stop();
     fastify.log.error(err);
     process.exit(1);
   }

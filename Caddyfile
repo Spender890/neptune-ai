@@ -4,7 +4,13 @@
 }
 
 :80 {
-    redir https://{host}{uri} permanent
+    handle /api/adhan/audio/* {
+        reverse_proxy neptune-backend:3000
+    }
+
+    handle {
+        redir https://{host}{uri} permanent
+    }
 }
 
 :443 {

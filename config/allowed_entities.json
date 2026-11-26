@@ -14,7 +14,8 @@
     "tts.google_translate_en_com",
     "timer.neptune_timer",
     "asterisk.pbx",
-    "intercom.*"
+    "intercom.*",
+    "adhan.*"
   ],
   "allowed_domains": [
     "light",
@@ -27,7 +28,8 @@
     "binary_sensor",
     "tts",
     "asterisk",
-    "intercom"
+    "intercom",
+    "adhan"
   ],
   "consequential_entities": [
     "lock.front_door",
