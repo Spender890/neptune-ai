@@ -2192,14 +2192,11 @@
           clearInterval(visionPreviewTimer);
           visionPreviewTimer = null;
         }
+        img.removeAttribute('src');
       } else {
         wrap.style.display = 'block';
         if (btn) btn.textContent = 'Hide Preview';
-        const refreshImg = () => {
-          img.src = `/api/vision/snapshot?t=${Date.now()}`;
-        };
-        refreshImg();
-        visionPreviewTimer = setInterval(refreshImg, 500);
+        img.src = `/api/vision/stream?t=${Date.now()}`;
       }
     }
 

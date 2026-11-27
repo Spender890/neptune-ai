@@ -2,9 +2,11 @@
 """
 NEPTUNE-AI Vision Microservice
 MediaPipe Hands finger-count passcode recognition on the intercom camera.
-Default passcode: [5, 5, 4, 2, 3, 5] -> unlocks Door 1 via Neptune backend.
+Supports zero-lag RTSP streaming (Channel 102 substream) + Home Assistant snapshot fallback,
+orientation-invariant high-five thumb detection, and live MJPEG streaming for Cockpit.
 """
 
+from collections import Counter, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -13,6 +15,9 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+
+# Prefer reliable TCP transport for Hikvision RTSP streams
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay")
 
 import cv2
 import mediapipe as mp
@@ -42,11 +47,14 @@ DEFAULT_CONFIG = {
 }
 
 state_lock = threading.Lock()
+frame_cond = threading.Condition()
 config = dict(DEFAULT_CONFIG)
+active_stream_clients = 0
 
 runtime_state = {
     "status": "armed",  # armed | disabled | collecting | locked_out | unlocked
     "current_fingers": None,
+    "finger_mask": [False, False, False, False, False],
     "hand_detected": False,
     "entered": [],
     "hold_progress": 0.0,
@@ -58,10 +66,94 @@ runtime_state = {
     "last_unlock": None,
     "last_error": "",
     "camera_ok": False,
+    "source_mode": "ha_proxy",
     "frames_processed": 0,
     "fps": 0.0,
     "latest_jpeg": b"",
+    "frame_seq": 0,
 }
+
+
+class RTSPGrabber:
+    """Continuously drains an RTSP stream in a background thread so inference always gets the freshest frame."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._url = ""
+        self._latest_frame = None
+        self._latest_ts = 0.0
+        self._error = ""
+        self._stop = False
+        self._thread = None
+
+    def configure(self, rtsp_url: str):
+        rtsp_url = (rtsp_url or "").strip()
+        with self._lock:
+            if rtsp_url == self._url and (not rtsp_url or (self._thread and self._thread.is_alive())):
+                return
+            self._url = rtsp_url
+            self._latest_frame = None
+            self._latest_ts = 0.0
+            self._error = ""
+            if rtsp_url and (self._thread is None or not self._thread.is_alive()):
+                self._stop = False
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+
+    def get_latest(self):
+        with self._lock:
+            if self._latest_frame is None:
+                return None, self._error or "Connecting to RTSP stream..."
+            age = time.time() - self._latest_ts
+            if age > 4.0:
+                return None, "RTSP stream stalled"
+            return self._latest_frame.copy(), ""
+
+    def _run(self):
+        cap = None
+        active_url = ""
+        while not self._stop:
+            with self._lock:
+                url = self._url
+            if not url:
+                if cap is not None:
+                    cap.release()
+                    cap = None
+                time.sleep(0.5)
+                continue
+
+            if cap is None or active_url != url:
+                if cap is not None:
+                    cap.release()
+                cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                active_url = url
+                if not cap.isOpened():
+                    with self._lock:
+                        self._error = "Failed to open RTSP stream"
+                    cap.release()
+                    cap = None
+                    time.sleep(1.5)
+                    continue
+
+            ok, frm = cap.read()
+            if ok and frm is not None:
+                with self._lock:
+                    self._latest_frame = frm
+                    self._latest_ts = time.time()
+                    self._error = ""
+            else:
+                with self._lock:
+                    self._error = "RTSP frame read failed"
+                cap.release()
+                cap = None
+                time.sleep(0.8)
+
+
+rtsp_grabber = RTSPGrabber()
 
 
 def sanitize_passcode(raw):
@@ -93,6 +185,9 @@ def load_config():
                 base = merge_config(base, saved)
     except Exception as exc:
         print(f"[Vision] Failed to load config: {exc}")
+    # Env VISION_RTSP_URL takes effect if saved rtsp_url is blank
+    if not base.get("rtsp_url") and os.environ.get("VISION_RTSP_URL"):
+        base["rtsp_url"] = os.environ["VISION_RTSP_URL"].strip()
     config = base
 
 
@@ -151,27 +246,46 @@ def dist2d(a, b):
     return math.hypot(a.x - b.x, a.y - b.y)
 
 
-def count_raised_fingers(hand_landmarks):
+def joint_angle_deg(a, b, c):
+    """Returns angle ABC in degrees (0..180)."""
+    v1x, v1y = a.x - b.x, a.y - b.y
+    v2x, v2y = c.x - b.x, c.y - b.y
+    n1 = math.hypot(v1x, v1y)
+    n2 = math.hypot(v2x, v2y)
+    if n1 < 1e-6 or n2 < 1e-6:
+        return 0.0
+    cos_ang = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (n1 * n2)))
+    return math.degrees(math.acos(cos_ang))
+
+
+def detect_raised_fingers(hand_landmarks):
     """
-    Orientation- and mirror-invariant finger counter (0..5) using MediaPipe 21 landmarks.
-    Fingers 2..5 compare tip-to-wrist vs pip-to-wrist distance.
-    Thumb compares thumb-tip-to-pinky-MCP vs thumb-IP-to-pinky-MCP distance.
+    Orientation- and mirror-invariant finger counter (0..5) + [T, I, M, R, P] mask.
+    Specifically tuned so upright/relaxed high-five thumbs count reliably as 5,
+    while folded thumbs count cleanly as 4.
     """
     lm = hand_landmarks.landmark
     wrist = lm[0]
     palm_scale = max(dist2d(wrist, lm[9]), 1e-4)
 
-    raised = 0
-    # Thumb: tip(4) vs ip(3) distance to pinky_mcp(17), normalized against palm size
-    if dist2d(lm[4], lm[17]) > dist2d(lm[3], lm[17]) + 0.12 * palm_scale:
-        raised += 1
+    # Thumb: check joint straightness + distance from palm center/index base/pinky base
+    thumb_angle = joint_angle_deg(lm[2], lm[3], lm[4])
+    thumb_abducted = dist2d(lm[4], lm[17]) > dist2d(lm[3], lm[17]) * 1.03
+    thumb_away_from_palm = (
+        dist2d(lm[4], lm[9]) > dist2d(lm[2], lm[9]) * 0.95
+        and dist2d(lm[4], lm[5]) > 0.36 * palm_scale
+    )
+    thumb_strong_open = dist2d(lm[4], lm[17]) > dist2d(lm[3], lm[17]) * 1.10
+    thumb_up = thumb_strong_open or (thumb_angle >= 140.0 and (thumb_abducted or thumb_away_from_palm))
 
-    # Index(8/6), Middle(12/10), Ring(16/14), Pinky(20/18)
-    for tip_idx, pip_idx in [(8, 6), (12, 10), (16, 14), (20, 18)]:
-        if dist2d(lm[tip_idx], wrist) > dist2d(lm[pip_idx], wrist) * 1.12:
-            raised += 1
+    mask = [thumb_up]
+    # Index(5,6,8), Middle(9,10,12), Ring(13,14,16), Pinky(17,18,20)
+    for mcp_idx, pip_idx, tip_idx in [(5, 6, 8), (9, 10, 12), (13, 14, 16), (17, 18, 20)]:
+        tip_further = dist2d(lm[tip_idx], wrist) > dist2d(lm[pip_idx], wrist) * 1.06
+        finger_straight = joint_angle_deg(lm[mcp_idx], lm[pip_idx], lm[tip_idx]) >= 125.0
+        mask.append(bool(tip_further and finger_straight))
 
-    return raised
+    return sum(1 for m in mask if m), mask
 
 
 def fetch_ha_snapshot(camera_entity):
@@ -179,7 +293,7 @@ def fetch_ha_snapshot(camera_entity):
         raise RuntimeError("Missing HOMEASSISTANT_URL, HOMEASSISTANT_TOKEN, or camera_entity")
     url = f"{HA_URL}/api/camera_proxy/{urllib.parse.quote(camera_entity)}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {HA_TOKEN}"})
-    with urllib.request.urlopen(req, timeout=3.0) as resp:
+    with urllib.request.urlopen(req, timeout=2.5) as resp:
         raw = resp.read()
     arr = np.frombuffer(raw, dtype=np.uint8)
     frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -219,27 +333,36 @@ def annotate_frame(frame, hand_landmarks_list, drawer, styles, snapshot_info):
 
     # Top dark banner overlay
     overlay = out.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 54), (10, 16, 28), -1)
+    cv2.rectangle(overlay, (0, 0), (w, 56), (10, 16, 28), -1)
     cv2.addWeighted(overlay, 0.72, out, 0.28, 0, out)
 
     status = snapshot_info["status"].upper()
     fingers = snapshot_info["fingers"]
+    finger_mask = snapshot_info.get("finger_mask") or [False, False, False, False, False]
     entered = snapshot_info["entered"]
     total = snapshot_info["passcode_len"]
     prog = snapshot_info["hold_progress"]
+    fps_val = snapshot_info.get("fps", 0.0)
 
     f_txt = f"Fingers: {fingers}" if fingers is not None else "No Hand"
     dots = " ".join(["*" if i < len(entered) else "-" for i in range(total)])
     banner_color = (16, 185, 129) if status == "UNLOCKED" else ((239, 68, 68) if status == "LOCKED_OUT" else (0, 210, 255))
 
-    cv2.putText(out, f"{status} | {f_txt}", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.58, banner_color, 2, cv2.LINE_AA)
-    cv2.putText(out, f"Code: [{dots}] ({len(entered)}/{total})", (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (235, 240, 248), 1, cv2.LINE_AA)
+    cv2.putText(out, f"{status} | {f_txt} | {fps_val:.0f} FPS", (10, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.54, banner_color, 2, cv2.LINE_AA)
+    cv2.putText(out, f"Code: [{dots}] ({len(entered)}/{total})", (10, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (235, 240, 248), 1, cv2.LINE_AA)
+
+    # Per-finger indicator badges (T I M R P) on top-right
+    labels = ["T", "I", "M", "R", "P"]
+    base_x = max(250, w - 115)
+    for idx, ch in enumerate(labels):
+        col = (16, 185, 129) if (fingers is not None and finger_mask[idx]) else (100, 116, 139)
+        cv2.putText(out, ch, (base_x + idx * 20, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.52, col, 2, cv2.LINE_AA)
 
     if prog > 0:
         bar_w = int((w - 20) * min(1.0, prog))
-        cv2.rectangle(out, (10, 50), (10 + bar_w, 54), (16, 185, 129), -1)
+        cv2.rectangle(out, (10, 52), (10 + bar_w, 56), (16, 185, 129), -1)
 
-    ok, enc = cv2.imencode(".jpg", out, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    ok, enc = cv2.imencode(".jpg", out, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
     return enc.tobytes() if ok else b""
 
 
@@ -256,9 +379,7 @@ def vision_loop():
         min_tracking_confidence=0.55,
     )
 
-    rtsp_cap = None
-    rtsp_active_url = ""
-
+    finger_history = deque(maxlen=3)
     candidate_digit = None
     candidate_since = 0.0
     reset_since = None
@@ -270,15 +391,19 @@ def vision_loop():
         loop_start = time.time()
         with state_lock:
             cfg = dict(config)
+            streaming_active = active_stream_clients > 0
 
         enabled = cfg["enabled"]
         passcode = cfg["passcode"]
         passcode_len = len(passcode)
+        rtsp_url = (cfg.get("rtsp_url") or "").strip()
+        rtsp_grabber.configure(rtsp_url)
 
-        if not enabled:
+        if not enabled and not streaming_active:
             with state_lock:
                 runtime_state["status"] = "disabled"
                 runtime_state["current_fingers"] = None
+                runtime_state["finger_mask"] = [False, False, False, False, False]
                 runtime_state["hand_detected"] = False
                 runtime_state["entered"] = []
                 runtime_state["hold_progress"] = 0.0
@@ -288,26 +413,9 @@ def vision_loop():
 
         frame = None
         cam_err = ""
-        rtsp_url = cfg.get("rtsp_url") or ""
-
         if rtsp_url:
-            if rtsp_cap is None or rtsp_active_url != rtsp_url:
-                if rtsp_cap is not None:
-                    rtsp_cap.release()
-                rtsp_cap = cv2.VideoCapture(rtsp_url)
-                rtsp_active_url = rtsp_url
-            ok, frm = rtsp_cap.read()
-            if ok and frm is not None:
-                frame = frm
-            else:
-                cam_err = "RTSP stream read failed"
-                rtsp_cap.release()
-                rtsp_cap = None
+            frame, cam_err = rtsp_grabber.get_latest()
         else:
-            if rtsp_cap is not None:
-                rtsp_cap.release()
-                rtsp_cap = None
-                rtsp_active_url = ""
             try:
                 frame = fetch_ha_snapshot(cfg["camera_entity"])
             except Exception as exc:
@@ -317,17 +425,34 @@ def vision_loop():
             with state_lock:
                 runtime_state["camera_ok"] = False
                 runtime_state["last_error"] = cam_err
-            time.sleep(1.5)
+                runtime_state["source_mode"] = "rtsp" if rtsp_url else "ha_proxy"
+            time.sleep(0.35 if rtsp_url else 1.2)
             continue
 
         now = time.time()
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb)
         hand_list = results.multi_hand_landmarks or []
-        fingers = count_raised_fingers(hand_list[0]) if hand_list else None
+        if hand_list:
+            raw_fingers, finger_mask = detect_raised_fingers(hand_list[0])
+            finger_history.append(raw_fingers)
+            fingers = Counter(finger_history).most_common(1)[0][0]
+        else:
+            finger_history.clear()
+            fingers = None
+            finger_mask = [False, False, False, False, False]
 
         with state_lock:
-            if runtime_state["lockout_until"] > now:
+            runtime_state["source_mode"] = "rtsp" if rtsp_url else "ha_proxy"
+            runtime_state["finger_mask"] = finger_mask
+            hold_prog = 0.0
+            if not enabled:
+                runtime_state["status"] = "disabled"
+                runtime_state["current_fingers"] = fingers
+                runtime_state["hand_detected"] = fingers is not None
+                entered_snap = []
+                status_snap = "disabled"
+            elif runtime_state["lockout_until"] > now:
                 runtime_state["status"] = "locked_out"
                 runtime_state["current_fingers"] = fingers
                 runtime_state["hand_detected"] = fingers is not None
@@ -339,10 +464,10 @@ def vision_loop():
                 runtime_state["current_fingers"] = fingers
                 runtime_state["hand_detected"] = fingers is not None
                 runtime_state["hold_progress"] = 1.0
+                hold_prog = 1.0
                 entered_snap = list(runtime_state["entered"])
                 status_snap = "unlocked"
             else:
-                # Clear sequence if timed out
                 if runtime_state["entered"] and (now - last_activity > cfg["sequence_timeout"]):
                     runtime_state["entered"] = []
                     runtime_state["needs_reset"] = False
@@ -350,8 +475,7 @@ def vision_loop():
                     candidate_digit = None
                     reset_since = None
 
-                # Handle fist (0) or dropped hand reset detection
-                is_reset_pose = (fingers is None or fingers == 0)
+                is_reset_pose = fingers is None or fingers == 0
                 if runtime_state["needs_reset"]:
                     if is_reset_pose:
                         if reset_since is None:
@@ -363,16 +487,13 @@ def vision_loop():
                     else:
                         reset_since = None
 
-                hold_prog = 0.0
                 if not runtime_state["needs_reset"] and fingers is not None and 1 <= fingers <= 5:
-                    # Only block immediate repeat if next digit equals last digit OR require_reset_between_all is True
                     last_dig = runtime_state["last_digit_committed"]
                     next_idx = len(runtime_state["entered"])
                     must_pause = cfg["require_reset_between_all"] or (
                         last_dig is not None and fingers == last_dig and next_idx < passcode_len
                     )
                     if must_pause:
-                        # Same digit held continuously right after commit; wait for brief fist/drop
                         runtime_state["needs_reset"] = True
                         reset_since = None
                         candidate_digit = None
@@ -388,7 +509,6 @@ def vision_loop():
                             last_activity = now
                             candidate_digit = None
                             hold_prog = 0.0
-                            # Check if upcoming digit in passcode equals this digit -> require reset
                             nxt_i = len(runtime_state["entered"])
                             if cfg["require_reset_between_all"] or (
                                 nxt_i < passcode_len and passcode[nxt_i] == fingers
@@ -396,7 +516,6 @@ def vision_loop():
                                 runtime_state["needs_reset"] = True
                                 reset_since = None
 
-                            # Evaluate completed passcode sequence
                             if len(runtime_state["entered"]) >= passcode_len:
                                 if runtime_state["entered"][:passcode_len] == passcode:
                                     print(f"[Vision] Hand-sign passcode matched! Unlocking {cfg['target_door']}")
@@ -434,6 +553,7 @@ def vision_loop():
             runtime_state["camera_ok"] = True
             runtime_state["last_error"] = ""
             runtime_state["frames_processed"] += 1
+            current_fps = runtime_state["fps"]
 
         jpeg = annotate_frame(
             frame,
@@ -443,23 +563,29 @@ def vision_loop():
             {
                 "status": status_snap,
                 "fingers": fingers,
+                "finger_mask": finger_mask,
                 "entered": entered_snap,
                 "passcode_len": passcode_len,
-                "hold_progress": hold_prog if status_snap not in ("unlocked", "locked_out") else 0.0,
+                "hold_progress": hold_prog,
+                "fps": current_fps,
             },
         )
         fps_counter += 1
         elapsed_fps = time.time() - fps_window_start
         with state_lock:
-            if jpeg:
-                runtime_state["latest_jpeg"] = jpeg
-            if elapsed_fps >= 2.0:
+            if elapsed_fps >= 1.5:
                 runtime_state["fps"] = round(fps_counter / elapsed_fps, 1)
                 fps_counter = 0
                 fps_window_start = time.time()
 
-        # Adaptive rate: fast (~8-10 FPS) when a hand is visible, gentle (~3 FPS) when idle
-        target_interval = 0.1 if (fingers is not None or entered_snap) else 0.35
+        if jpeg:
+            with frame_cond:
+                runtime_state["latest_jpeg"] = jpeg
+                runtime_state["frame_seq"] += 1
+                frame_cond.notify_all()
+
+        # Boost to ~18-22 FPS during active preview or hand entry; ~5 FPS when idle
+        target_interval = 0.045 if (streaming_active or fingers is not None or entered_snap) else 0.2
         sleep_time = target_interval - (time.time() - loop_start)
         if sleep_time > 0:
             time.sleep(sleep_time)
@@ -478,6 +604,7 @@ class VisionHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        global active_stream_clients
         if self.path == "/health":
             self._send_json(200, {"ok": True, "service": "neptune-vision"})
             return
@@ -490,6 +617,7 @@ class VisionHandler(BaseHTTPRequestHandler):
                     "config": dict(config),
                     "status": runtime_state["status"],
                     "current_fingers": runtime_state["current_fingers"],
+                    "finger_mask": runtime_state["finger_mask"],
                     "hand_detected": runtime_state["hand_detected"],
                     "entered_count": len(runtime_state["entered"]),
                     "entered_mask": "*" * len(runtime_state["entered"]) + "-" * max(0, len(config["passcode"]) - len(runtime_state["entered"])),
@@ -500,10 +628,45 @@ class VisionHandler(BaseHTTPRequestHandler):
                     "last_unlock": runtime_state["last_unlock"],
                     "last_error": runtime_state["last_error"],
                     "camera_ok": runtime_state["camera_ok"],
+                    "source_mode": runtime_state["source_mode"],
                     "frames_processed": runtime_state["frames_processed"],
                     "fps": runtime_state["fps"],
                 }
             self._send_json(200, payload)
+            return
+
+        if self.path.startswith("/stream.mjpg"):
+            self.send_response(200)
+            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.end_headers()
+
+            with state_lock:
+                active_stream_clients += 1
+            last_seq = -1
+            try:
+                while True:
+                    with frame_cond:
+                        if runtime_state["frame_seq"] == last_seq:
+                            frame_cond.wait(timeout=1.5)
+                        jpeg = runtime_state["latest_jpeg"]
+                        seq = runtime_state["frame_seq"]
+                    if not jpeg or seq == last_seq:
+                        continue
+                    last_seq = seq
+                    header = (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(jpeg)}\r\n\r\n".encode("ascii")
+                    )
+                    self.wfile.write(header + jpeg + b"\r\n")
+                    self.wfile.flush()
+            except Exception:
+                pass
+            finally:
+                with state_lock:
+                    active_stream_clients = max(0, active_stream_clients - 1)
             return
 
         if self.path.startswith("/snapshot.jpg"):

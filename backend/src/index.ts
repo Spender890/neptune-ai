@@ -1,5 +1,7 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as http from 'http';
+import * as https from 'https';
 import type { FastifyError, FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { NeptuneEngine } from './engine';
 import type { AdhanConfig } from './adhan';
@@ -275,6 +277,36 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
     reply.header('Content-Type', 'image/jpeg');
     reply.header('Cache-Control', 'no-store');
     return reply.send(res.buffer);
+  });
+
+  fastify.get('/api/vision/stream', (request: FastifyRequest, reply: FastifyReply) => {
+    const base = engine.config.visionUrl.replace(/\/+$/, '');
+    const streamUrl = new URL(`${base}/stream.mjpg`);
+    const transport = streamUrl.protocol === 'https:' ? https : http;
+
+    reply.hijack();
+    const upstreamReq = transport.get(streamUrl, (upstreamRes) => {
+      const contentType = upstreamRes.headers['content-type'] || 'multipart/x-mixed-replace; boundary=frame';
+      reply.raw.writeHead(upstreamRes.statusCode || 200, {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        Pragma: 'no-cache',
+      });
+      upstreamRes.pipe(reply.raw);
+    });
+
+    upstreamReq.on('error', () => {
+      if (!reply.raw.headersSent) {
+        reply.raw.writeHead(503, { 'Content-Type': 'application/json' });
+        reply.raw.end(JSON.stringify({ error: 'Vision stream unavailable' }));
+      } else {
+        reply.raw.end();
+      }
+    });
+
+    request.raw.on('close', () => {
+      upstreamReq.destroy();
+    });
   });
 
   // In-Browser Voice Interaction (Whisper STT + Fast-Path/LLM + Piper TTS)
