@@ -3,6 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     libglib2.0-0 \
     libgl1 \
     libgomp1 \

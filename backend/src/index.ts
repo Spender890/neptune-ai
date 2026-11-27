@@ -309,6 +309,29 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
     });
   });
 
+  fastify.post(
+    '/api/vision/event',
+    async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply: FastifyReply) => {
+      const res = await engine.handleVisionEvent(request.body || {});
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.get('/api/vision/events', async () => engine.getVisionEvents());
+
+  fastify.get(
+    '/api/vision/events/:filename',
+    async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+      const res = await engine.getVisionEventSnapshot(request.params.filename);
+      if (!res.ok || !res.buffer) {
+        return reply.status(res.statusCode).send({ error: res.error || 'Snapshot not found' });
+      }
+      reply.header('Content-Type', 'image/jpeg');
+      reply.header('Cache-Control', 'public, max-age=3600');
+      return reply.send(res.buffer);
+    }
+  );
+
   // In-Browser Voice Interaction (Whisper STT + Fast-Path/LLM + Piper TTS)
   fastify.post(
     '/api/voice/interact',

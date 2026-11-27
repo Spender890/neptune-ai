@@ -897,14 +897,15 @@
     <!-- Intercom Hand-Sign Passcode (MediaPipe Vision) Card -->
     <div class="card">
       <div class="card-title">
-        <span>&#9995; Intercom Hand-Sign Passcode</span>
+        <span>&#9995; Intercom Smart Access (3-Stage)</span>
         <span id="vision-status-pill" class="tv-pill pill-playing">LOADING...</span>
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 10px; padding: 0.65rem 0.8rem; margin-bottom: 0.7rem;">
         <div>
-          <div style="font-size: 0.72rem; color: var(--text-muted);">Detected Fingers: <strong id="vision-fingers-text" style="color: var(--accent);">None</strong></div>
+          <div style="font-size: 0.72rem; color: var(--text-muted);">Hand: <strong id="vision-fingers-text" style="color: var(--accent);">None</strong></div>
           <div style="font-size: 0.88rem; font-family: monospace; margin-top: 0.2rem; letter-spacing: 2px;" id="vision-mask-text">- - - - - -</div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.2rem;" id="vision-voice-text">Voice: waiting</div>
         </div>
         <div style="text-align: right; font-size: 0.72rem; color: var(--text-muted);">
           <div id="vision-cam-text">Camera: checking...</div>
@@ -916,18 +917,40 @@
         <img id="vision-snapshot-img" alt="Intercom Hand-Sign Preview" style="width: 100%; display: block;" />
       </div>
 
-      <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.6rem; font-size: 0.82rem; color: #cbd5e1; flex-wrap: wrap;">
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.6rem; font-size: 0.8rem; color: #cbd5e1; flex-wrap: wrap;">
         <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
           <input type="checkbox" id="vision-enabled-chk" checked />
           <span>Armed</span>
         </label>
         <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="vision-voice-chk" checked />
+          <span>Require Voice</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="vision-chime-chk" checked />
+          <span>Outdoor Beeps</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
           <input type="checkbox" id="vision-reset-all-chk" />
-          <span>Fist Reset Between Every Digit</span>
+          <span>Fist Between All</span>
         </label>
       </div>
 
-      <div style="display: grid; grid-template-columns: 1.4fr 1fr 0.7fr; gap: 0.45rem; margin-bottom: 0.65rem;">
+      <div style="display: grid; grid-template-columns: 1fr 1.3fr; gap: 0.45rem; margin-bottom: 0.55rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Wake Gesture:</div>
+          <select id="vision-wake-select" class="select-input" style="width: 100%; padding: 0.42rem 0.5rem; font-size: 0.8rem;">
+            <option value="0">Closed Fist (0)</option>
+            <option value="5">Open Palm (5)</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Voice Passphrase:</div>
+          <input type="text" id="vision-voice-phrase-input" class="text-input" style="width: 100%; padding: 0.42rem 0.55rem; font-size: 0.82rem;" value="open door" placeholder="open door" />
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1.3fr 1fr 0.7fr; gap: 0.45rem; margin-bottom: 0.55rem;">
         <div>
           <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Finger Code (1-5):</div>
           <input type="text" id="vision-passcode-input" class="text-input" style="width: 100%; padding: 0.45rem 0.6rem; font-size: 0.85rem; font-family: monospace;" value="5 5 4 2 3 5" placeholder="5 5 4 2 3 5" />
@@ -946,14 +969,26 @@
         </div>
       </div>
 
-      <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.65rem;">
-        Hold each finger count (1-5) steady; briefly close hand (fist `0`) between repeated digits like 5 &rarr; 5.
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; margin-bottom: 0.6rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Speaker Alert Start (hr):</div>
+          <input type="number" id="vision-ann-start-input" min="0" max="23" value="10" class="text-input" style="width: 100%; padding: 0.4rem 0.5rem; font-size: 0.8rem;" />
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Speaker Quiet After (hr):</div>
+          <input type="number" id="vision-ann-end-input" min="0" max="24" value="23" class="text-input" style="width: 100%; padding: 0.4rem 0.5rem; font-size: 0.8rem;" />
+        </div>
       </div>
 
-      <div style="display: flex; gap: 0.5rem;">
-        <button class="btn-send" onclick="saveVisionConfig()" style="flex: 1; padding: 0.55rem;">Save Code</button>
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 0.75rem;">
+        <button class="btn-send" onclick="saveVisionConfig()" style="flex: 1; padding: 0.55rem;">Save</button>
         <button class="ctrl-btn" id="vision-preview-btn" onclick="toggleVisionPreview()" style="flex: 1;">&#128065; Live Preview</button>
         <button class="ctrl-btn" onclick="resetVisionSequence()" style="padding: 0.55rem 0.8rem;">Reset</button>
+      </div>
+
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.35rem;">Recent Access &amp; Wake Snapshots:</div>
+      <div id="vision-events-list" style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 210px; overflow-y: auto;">
+        <div style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 0.6rem;">No recent smart access events.</div>
       </div>
     </div>
 
@@ -2108,19 +2143,23 @@
 
         const st = String(data.status || 'armed').toUpperCase();
         if (pill) {
-          pill.className = `tv-pill ${st === 'UNLOCKED' || st === 'COLLECTING' ? 'pill-paused' : (st === 'LOCKED_OUT' || st === 'DISABLED' ? 'pill-off' : 'pill-playing')}`;
-          pill.textContent = st === 'LOCKED_OUT' ? `LOCKED (${data.lockout_remaining || 0}s)` : st;
+          pill.className = `tv-pill ${st === 'UNLOCKED' || st === 'COLLECTING' || st === 'LISTENING_VOICE' ? 'pill-paused' : (st === 'LOCKED_OUT' || st === 'DISABLED' ? 'pill-off' : 'pill-playing')}`;
+          pill.textContent = st === 'LOCKED_OUT' ? `LOCKED (${data.lockout_remaining || 0}s)` : st.replace('_', ' ');
         }
         if (fTxt) {
           fTxt.textContent = data.current_fingers !== null && data.current_fingers !== undefined
             ? `${data.current_fingers} finger${data.current_fingers === 1 ? '' : 's'}${data.needs_reset ? ' (close fist)' : ''}`
-            : 'No hand';
+            : 'No close hand';
+        }
+        const vTxt = document.getElementById('vision-voice-text');
+        if (vTxt) {
+          vTxt.textContent = data.last_transcript ? `Voice heard: "${data.last_transcript}"` : (st === 'LISTENING_VOICE' ? 'Listening on intercom mic...' : 'Voice: ready');
         }
         if (mTxt) {
           mTxt.textContent = (data.entered_mask || '------').split('').join(' ');
         }
         if (cTxt) {
-          cTxt.textContent = data.camera_ok ? 'Camera: Live' : (data.last_error || 'Camera waiting...');
+          cTxt.textContent = data.camera_ok ? `Camera: ${data.source_mode || 'live'}` : (data.source_mode === 'sleeping' ? 'Camera: Sleeping' : (data.last_error || 'Camera waiting...'));
         }
         if (fpsTxt) {
           fpsTxt.textContent = `${data.fps || 0} FPS · ${data.frames_processed || 0} frames`;
@@ -2129,18 +2168,66 @@
         if (data.config && (!visionConfigSynced || forceSync)) {
           const cfg = data.config;
           const enChk = document.getElementById('vision-enabled-chk');
+          const voiceChk = document.getElementById('vision-voice-chk');
+          const chimeChk = document.getElementById('vision-chime-chk');
           const rstChk = document.getElementById('vision-reset-all-chk');
+          const wakeSel = document.getElementById('vision-wake-select');
+          const phraseIn = document.getElementById('vision-voice-phrase-input');
           const pcIn = document.getElementById('vision-passcode-input');
           const doorSel = document.getElementById('vision-door-select');
           const holdIn = document.getElementById('vision-hold-input');
+          const annStartIn = document.getElementById('vision-ann-start-input');
+          const annEndIn = document.getElementById('vision-ann-end-input');
 
           if (enChk) enChk.checked = Boolean(cfg.enabled);
+          if (voiceChk) voiceChk.checked = cfg.require_voice !== false;
+          if (chimeChk) chimeChk.checked = cfg.outdoor_chime !== false;
           if (rstChk) rstChk.checked = Boolean(cfg.require_reset_between_all);
+          if (wakeSel && cfg.wake_gesture !== undefined) wakeSel.value = String(cfg.wake_gesture);
+          if (phraseIn && cfg.voice_passphrase) phraseIn.value = cfg.voice_passphrase;
           if (pcIn && Array.isArray(cfg.passcode)) pcIn.value = cfg.passcode.join(' ');
           if (doorSel && cfg.target_door) doorSel.value = cfg.target_door;
           if (holdIn && cfg.hold_seconds) holdIn.value = cfg.hold_seconds;
+          if (annStartIn && cfg.announce_start_hour !== undefined) annStartIn.value = cfg.announce_start_hour;
+          if (annEndIn && cfg.announce_end_hour !== undefined) annEndIn.value = cfg.announce_end_hour;
           visionConfigSynced = true;
         }
+      } catch (e) {
+        // Soft ignore
+      }
+    }
+
+    async function fetchVisionEvents() {
+      try {
+        const res = await apiFetch('/api/vision/events');
+        const data = await res.json();
+        const box = document.getElementById('vision-events-list');
+        if (!box || !Array.isArray(data.events)) return;
+        if (data.events.length === 0) {
+          box.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem; text-align: center; padding: 0.6rem;">No recent smart access events.</div>';
+          return;
+        }
+        let html = '';
+        for (const ev of data.events.slice(0, 8)) {
+          const safeMsg = escapeHtml(ev.message || ev.type || 'Event');
+          const safeTime = escapeHtml(new Date(ev.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          const modeBadge = ev.quietMode
+            ? '<span class="origin-badge" style="background: rgba(100,116,139,0.25); color: #cbd5e1;">Quiet</span>'
+            : '<span class="origin-badge" style="background: rgba(16,185,129,0.2); color: #34d399;">Day</span>';
+          const thumb = ev.snapshotUrl && /^\/api\/vision\/events\/evt_\d+\.jpg$/.test(ev.snapshotUrl)
+            ? `<a href="${escapeHtml(ev.snapshotUrl)}" target="_blank" style="flex-shrink:0;"><img src="${escapeHtml(ev.snapshotUrl)}" alt="Snapshot" style="width: 56px; height: 42px; object-fit: cover; border-radius: 6px; border: 1px solid var(--card-border);" /></a>`
+            : '';
+          html += `
+            <div style="display:flex; align-items:center; gap:0.55rem; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 0.45rem 0.6rem;">
+              ${thumb}
+              <div style="flex:1; min-width:0;">
+                <div style="font-size: 0.78rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${safeMsg}</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.15rem;">${safeTime} ${modeBadge}</div>
+              </div>
+            </div>
+          `;
+        }
+        box.innerHTML = html;
       } catch (e) {
         // Soft ignore
       }
@@ -2155,10 +2242,16 @@
       }
       const payload = {
         enabled: Boolean(document.getElementById('vision-enabled-chk')?.checked),
+        require_voice: Boolean(document.getElementById('vision-voice-chk')?.checked),
+        outdoor_chime: Boolean(document.getElementById('vision-chime-chk')?.checked),
         require_reset_between_all: Boolean(document.getElementById('vision-reset-all-chk')?.checked),
+        wake_gesture: parseInt(document.getElementById('vision-wake-select')?.value || '0', 10),
+        voice_passphrase: (document.getElementById('vision-voice-phrase-input')?.value || 'open door').trim(),
         passcode: digits,
         target_door: document.getElementById('vision-door-select')?.value || 'door1',
         hold_seconds: parseFloat(document.getElementById('vision-hold-input')?.value || '0.6'),
+        announce_start_hour: parseInt(document.getElementById('vision-ann-start-input')?.value || '10', 10),
+        announce_end_hour: parseInt(document.getElementById('vision-ann-end-input')?.value || '23', 10),
       };
       const res = await apiFetch('/api/vision/config', {
         method: 'POST',
@@ -2166,10 +2259,10 @@
         body: JSON.stringify(payload)
       });
       if (res.ok) {
-        resText.textContent = `Hand-sign passcode saved (${digits.length} digits).`;
+        resText.textContent = `Smart Access settings saved (${digits.length}-digit PIN).`;
         fetchVisionStatus(true);
       } else {
-        resText.textContent = 'Failed to save hand-sign passcode.';
+        resText.textContent = 'Failed to save Smart Access settings.';
       }
     }
 
@@ -2207,11 +2300,13 @@
     fetchIntercomStatus();
     fetchAdhanStatus(true);
     fetchVisionStatus(true);
+    fetchVisionEvents();
     setInterval(fetchReminders, 3000);
     setInterval(fetchTVState, 4000);
     setInterval(fetchIntercomStatus, 3000);
     setInterval(() => fetchAdhanStatus(false), 30000);
     setInterval(() => fetchVisionStatus(false), 2000);
+    setInterval(fetchVisionEvents, 4000);
   </script>
 </body>
 </html>

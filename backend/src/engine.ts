@@ -217,6 +217,7 @@ export class NeptuneEngine {
   public readonly intercomManager: IntercomManager;
   public readonly adhanManager: AdhanManager;
   private readonly hasInjectedOllama: boolean;
+  private visionEvents: Array<Record<string, unknown>> = [];
 
   constructor(deps: NeptuneDependencies = {}) {
     this.config = loadConfigFromEnv(deps.config);
@@ -238,6 +239,7 @@ export class NeptuneEngine {
     this.adhanManager =
       deps.adhanManager ||
       new AdhanManager(this.config.dataDir, this.haClient, this.webOSManager, this.config.speakerEntity);
+    this.visionEvents = this.loadVisionEvents();
   }
 
   public getHealth(): Record<string, unknown> {
@@ -468,6 +470,111 @@ export class NeptuneEngine {
         error: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  private getVisionEventsPath(): string {
+    return path.join(this.config.dataDir, 'vision_events.json');
+  }
+
+  private loadVisionEvents(): Array<Record<string, unknown>> {
+    try {
+      const p = this.getVisionEventsPath();
+      if (fs.existsSync(p)) {
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        if (Array.isArray(parsed)) return parsed.slice(-30);
+      }
+    } catch {
+      // Ignore parse/read error
+    }
+    return [];
+  }
+
+  private saveVisionEvents(): void {
+    try {
+      const p = this.getVisionEventsPath();
+      const dir = path.dirname(p);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const tmp = `${p}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(this.visionEvents.slice(-30), null, 2), 'utf-8');
+      fs.renameSync(tmp, p);
+    } catch (err) {
+      console.warn('[NeptuneEngine] Failed to persist vision_events.json:', err);
+    }
+  }
+
+  public getVisionEvents() {
+    return { events: [...this.visionEvents].reverse() };
+  }
+
+  public async getVisionEventSnapshot(filename: string): Promise<{ ok: boolean; statusCode: number; buffer?: Buffer; error?: string }> {
+    if (!/^evt_\d+\.jpg$/.test(filename)) {
+      return { ok: false, statusCode: 400, error: 'Invalid event snapshot filename.' };
+    }
+    const localPath = path.join(this.config.dataDir, 'vision_events', filename);
+    if (fs.existsSync(localPath)) {
+      return { ok: true, statusCode: 200, buffer: fs.readFileSync(localPath) };
+    }
+    const base = this.config.visionUrl.replace(/\/+$/, '');
+    try {
+      const resp = await fetch(`${base}/events/${filename}`, { signal: AbortSignal.timeout(3000) });
+      if (!resp.ok) return { ok: false, statusCode: resp.status, error: `Event snapshot HTTP ${resp.status}` };
+      return { ok: true, statusCode: 200, buffer: Buffer.from(await resp.arrayBuffer()) };
+    } catch (err: unknown) {
+      return { ok: false, statusCode: 503, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  public async handleVisionEvent(body: Record<string, unknown>) {
+    const type = typeof body?.type === 'string' ? body.type : 'wake';
+    const message = typeof body?.message === 'string' ? body.message : 'Front door activity detected';
+    const snapshot = typeof body?.snapshot === 'string' && /^evt_\d+\.jpg$/.test(body.snapshot) ? body.snapshot : '';
+    const transcript = typeof body?.transcript === 'string' ? body.transcript : '';
+    const startHour = typeof body?.announceStartHour === 'number' ? body.announceStartHour : 10;
+    const endHour = typeof body?.announceEndHour === 'number' ? body.announceEndHour : 23;
+
+    const tz = this.adhanManager.getConfig().timezone || 'Asia/Dubai';
+    const localHour = parseInt(
+      new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date()),
+      10
+    ) % 24;
+    const isDaytime = startHour <= endHour ? localHour >= startHour && localHour < endHour : localHour >= startHour || localHour < endHour;
+
+    let announcedToHouse = false;
+    if (isDaytime) {
+      if (type === 'wake') {
+        announcedToHouse = true;
+        void this.haClient
+          .callService('tts', 'speak', 'tts.google_translate_en_com', {
+            media_player_entity_id: this.config.speakerEntity,
+            message: 'Someone is at the front door.',
+          })
+          .catch(() => undefined);
+        void this.webOSManager.showToast('🔔 Front Door: Someone is outside').catch(() => undefined);
+      } else if (type === 'unlock_success') {
+        void this.webOSManager.showToast('🔓 Front Door unlocked via Smart Access').catch(() => undefined);
+      } else if (type === 'lockout') {
+        void this.webOSManager.showToast('⚠️ Front Door Smart Access locked out!').catch(() => undefined);
+      }
+    }
+
+    const record = {
+      id: `vevt_${Date.now()}`,
+      type,
+      timestamp: typeof body?.timestamp === 'number' ? body.timestamp : Date.now(),
+      message,
+      transcript,
+      snapshotUrl: snapshot ? `/api/vision/events/${snapshot}` : '',
+      announcedToHouse,
+      quietMode: !isDaytime,
+    };
+
+    this.visionEvents.push(record);
+    if (this.visionEvents.length > 30) {
+      this.visionEvents = this.visionEvents.slice(-30);
+    }
+    this.saveVisionEvents();
+
+    return { statusCode: 200, body: { success: true, event: record } };
   }
 
   public async handleVoiceInteract(audioBase64?: string, text?: string): Promise<{
