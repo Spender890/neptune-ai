@@ -12,9 +12,26 @@ export interface IntentResult {
 const MAX_COMMAND_LENGTH = 500;
 
 /**
- * Deterministic regex-based intent router evaluated before the LLM fallback.
- * Guarantees sub-10ms predictable routing for standard smart-home, TV, reminder,
- * and intercom commands without consuming LLM CPU cycles.
+ * Normalizes common Whisper STT phonetic/spacing artifacts before deterministic matching.
+ */
+function normalizeTranscript(clean: string): string {
+  return clean
+    .replace(/\b(?:jellifen|jellifin|jelly\s+fin|gellyfin|jelifen)\b/g, 'jellyfin')
+    .replace(/\byou\s+tube\b/g, 'youtube')
+    .replace(/\bh\s*d\s*m\s*i\b/g, 'hdmi')
+    .replace(/\b(?:azaan|azan)\b/g, 'adhan')
+    .replace(/\b(?:magrib|maghreb)\b/g, 'maghrib')
+    .replace(/\bfajar\b/g, 'fajr')
+    .replace(/\besha\b/g, 'isha')
+    .replace(/\b(?:zuhr|dhuhur)\b/g, 'dhuhr')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Deterministic Siri-style regex intent router evaluated before smart fallback.
+ * Guarantees sub-10ms predictable routing for smart-home, TV, Adhan, Vision, reminder,
+ * and intercom commands without requiring an LLM.
  */
 export class FastPathRouter {
   private tvEntityId: string;
@@ -41,7 +58,8 @@ export class FastPathRouter {
       return { matched: false };
     }
 
-    const clean = raw.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+    const stripped = raw.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+    const clean = normalizeTranscript(stripped);
     if (!clean) {
       return { matched: false };
     }
@@ -148,6 +166,137 @@ export class FastPathRouter {
         entity_id: 'adhan.scheduler',
         data: { prayer: specificPrayerMatch[1] },
         confirmation_speech: 'Checking prayer time.',
+        requires_confirmation: false,
+      };
+    }
+
+    // 1C. SIRI-STYLE EVERYDAY INTENTS (Time/Date, Weather, Speaker Vol, Reminders, Vision, Help)
+    const timeDateMatch = clean.match(
+      /^(?:please\s+)?(?:what\s+time\s+is\s+it|tell\s+me\s+the\s+time|current\s+time|time\s+now|what(?:'s|\s+is)\s+(?:today'?s?\s+)?date|what\s+day\s+is\s+(?:it|today))$/
+    );
+    if (timeDateMatch) {
+      const wantsDate = clean.includes('date') || clean.includes('day');
+      return {
+        matched: true,
+        intent: 'siri_time_date',
+        domain: 'siri',
+        service: 'time_date',
+        entity_id: 'siri.clock',
+        data: { mode: wantsDate ? 'date' : 'time' },
+        confirmation_speech: 'Checking local time.',
+        requires_confirmation: false,
+      };
+    }
+
+    const weatherMatch = clean.match(
+      /^(?:please\s+)?(?:what(?:'s|\s+is)\s+(?:the\s+)?weather(?:\s+like)?(?:\s+outside|\s+today)?|how\s+is\s+(?:the\s+)?weather|what(?:'s|\s+is)\s+(?:the\s+)?temperature(?:\s+outside)?|weather(?:\s+forecast)?)$/
+    );
+    if (weatherMatch) {
+      return {
+        matched: true,
+        intent: 'siri_weather',
+        domain: 'weather',
+        service: 'get_state',
+        entity_id: 'weather.home',
+        confirmation_speech: 'Checking local weather.',
+        requires_confirmation: false,
+      };
+    }
+
+    const speakerVolMatch = clean.match(
+      /^(?:please\s+)?(?:set\s+)?(?:the\s+)?(?:home\s+)?speakers?\s+volume\s+(?:to\s+)?(\d{1,3})(?:\s*%|percent)?$/
+    );
+    if (speakerVolMatch) {
+      const level = Math.max(0, Math.min(100, parseInt(speakerVolMatch[1], 10)));
+      return {
+        matched: true,
+        intent: 'speaker_control',
+        domain: 'media_player',
+        service: 'volume_set',
+        entity_id: SPEAKER_ENTITY,
+        data: { action: 'volume', level },
+        confirmation_speech: `Setting home speaker volume to ${level} percent.`,
+        requires_confirmation: false,
+      };
+    }
+
+    const speakerStopMatch = clean.match(
+      /^(?:please\s+)?stop\s+(?:the\s+)?(?:home\s+)?(?:speakers?|music|playback|audio)$/
+    );
+    if (speakerStopMatch) {
+      return {
+        matched: true,
+        intent: 'speaker_control',
+        domain: 'media_player',
+        service: 'media_stop',
+        entity_id: SPEAKER_ENTITY,
+        data: { action: 'stop' },
+        confirmation_speech: 'Stopping home speaker playback.',
+        requires_confirmation: false,
+      };
+    }
+
+    const remListMatch = clean.match(
+      /^(?:please\s+)?(?:list|show|check|what\s+are)\s+(?:my\s+|the\s+|active\s+)?reminders?$|^my\s+reminders$/
+    );
+    if (remListMatch) {
+      return {
+        matched: true,
+        intent: 'reminder_list',
+        domain: 'siri',
+        service: 'list_reminders',
+        entity_id: 'siri.reminders',
+        confirmation_speech: 'Checking active reminders.',
+        requires_confirmation: false,
+      };
+    }
+
+    const remClearMatch = clean.match(
+      /^(?:please\s+)?(?:cancel|clear|delete|remove)\s+(?:all\s+)?(?:my\s+)?reminders$/
+    );
+    if (remClearMatch) {
+      return {
+        matched: true,
+        intent: 'reminder_clear',
+        domain: 'siri',
+        service: 'clear_reminders',
+        entity_id: 'siri.reminders',
+        confirmation_speech: 'Clearing all active reminders.',
+        requires_confirmation: false,
+      };
+    }
+
+    const visionMatch = clean.match(
+      /^(?:please\s+)?(?:(enable|turn\s+on|arm|disable|turn\s+off|disarm)\s+(?:the\s+)?(?:hand|gesture)\s*(?:sign\s+)?(?:unlock|passcode|camera|vision)|(?:hand|gesture)\s*(?:sign\s+)?(?:unlock|passcode)\s+status)$/
+    );
+    if (visionMatch) {
+      let action = 'status';
+      if (clean.includes('enable') || clean.includes('turn on') || clean.includes('arm')) {
+        action = 'enable';
+      } else if (clean.includes('disable') || clean.includes('turn off') || clean.includes('disarm')) {
+        action = 'disable';
+      }
+      return {
+        matched: true,
+        intent: 'vision_control',
+        domain: 'vision',
+        service: action,
+        entity_id: 'vision.intercom',
+        data: { action },
+        confirmation_speech: 'Updating intercom gesture unlock.',
+        requires_confirmation: false,
+      };
+    }
+
+    const helpMatch = clean.match(/^(?:help|what\s+can\s+you\s+do|commands|list\s+commands)$/);
+    if (helpMatch) {
+      return {
+        matched: true,
+        intent: 'siri_help',
+        domain: 'siri',
+        service: 'help',
+        entity_id: 'siri.help',
+        confirmation_speech: 'Listing available commands.',
         requires_confirmation: false,
       };
     }
@@ -408,6 +557,7 @@ export class FastPathRouter {
       'web browser',
       'browser',
       'ps4',
+      'hdmi 1',
       'hdmi 2',
       'hdmi 3',
       'hdmi 4',

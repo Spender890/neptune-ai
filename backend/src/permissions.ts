@@ -17,7 +17,21 @@ const ENTITY_ID_RE = /^[a-z0-9_]+\.[a-z0-9_]+$/;
 
 const DEFAULT_CONFIG: PermissionsConfig = {
   allowed_entities: [],
-  allowed_domains: ['light', 'switch', 'climate', 'media_player', 'webostv', 'timer', 'tts', 'asterisk', 'intercom', 'adhan'],
+  allowed_domains: [
+    'light',
+    'switch',
+    'climate',
+    'media_player',
+    'webostv',
+    'timer',
+    'tts',
+    'asterisk',
+    'intercom',
+    'adhan',
+    'siri',
+    'vision',
+    'weather',
+  ],
   consequential_entities: ['lock.front_door', 'cover.garage_door'],
 };
 

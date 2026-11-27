@@ -15,7 +15,10 @@
     "timer.neptune_timer",
     "asterisk.pbx",
     "intercom.*",
-    "adhan.*"
+    "adhan.*",
+    "siri.*",
+    "vision.*",
+    "weather.*"
   ],
   "allowed_domains": [
     "light",
@@ -29,7 +32,10 @@
     "tts",
     "asterisk",
     "intercom",
-    "adhan"
+    "adhan",
+    "siri",
+    "vision",
+    "weather"
   ],
   "consequential_entities": [
     "lock.front_door",

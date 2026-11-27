@@ -20,8 +20,6 @@ volumes:
     name: neptune_caddy_data
   neptune_caddy_config:
     name: neptune_caddy_config
-  neptune_ollama_data:
-    name: neptune_ollama_data
   neptune_whisper_data:
     name: neptune_whisper_data
   neptune_piper_data:
@@ -56,30 +54,6 @@ services:
       retries: 3
 
   # ----------------------------------------------------------------------------
-  # OLLAMA LOCAL LLM ENGINE (Pinned to 0.40.16)
-  # ----------------------------------------------------------------------------
-  ollama:
-    image: ollama/ollama:0.40.16
-    container_name: neptune-ollama
-    restart: unless-stopped
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434
-      - OLLAMA_NUM_PARALLEL=1
-      - OLLAMA_NUM_THREADS=4
-      - OLLAMA_KEEP_ALIVE=24h
-    volumes:
-      - neptune_ollama_data:/root/.ollama
-    networks:
-      - neptune-net
-    ports:
-      - "127.0.0.1:11434:11434"
-    healthcheck:
-      test: ["CMD-SHELL", "ollama list || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # ----------------------------------------------------------------------------
   # WYOMING-WHISPER STT (Pinned to 3.8.1)
   # ----------------------------------------------------------------------------
   whisper:
@@ -94,7 +68,7 @@ services:
     ports:
       - "127.0.0.1:10300:10300"
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 10300 || exit 1"]
+      test: ["CMD", "python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 10300), 2); s.close()"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -140,11 +114,40 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:
-      - ollama
       - whisper
       - piper
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------------
+  # NEPTUNE VISION - INTERCOM HAND-SIGN PASSCODE (MediaPipe + OpenCV, 0.1.0)
+  # ----------------------------------------------------------------------------
+  neptune-vision:
+    build:
+      context: ./vision
+      dockerfile: Dockerfile
+    image: neptune-vision:0.1.0
+    container_name: neptune-vision
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - BACKEND_URL=http://neptune-backend:3000
+      - VISION_PORT=8090
+      - DATA_DIR=/app/data
+    volumes:
+      - neptune_app_data:/app/data
+    networks:
+      - neptune-net
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      - neptune-backend
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
       interval: 30s
       timeout: 5s
       retries: 3

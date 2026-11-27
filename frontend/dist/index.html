@@ -894,6 +894,69 @@
       </div>
     </div>
 
+    <!-- Intercom Hand-Sign Passcode (MediaPipe Vision) Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>&#9995; Intercom Hand-Sign Passcode</span>
+        <span id="vision-status-pill" class="tv-pill pill-playing">LOADING...</span>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 10px; padding: 0.65rem 0.8rem; margin-bottom: 0.7rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted);">Detected Fingers: <strong id="vision-fingers-text" style="color: var(--accent);">None</strong></div>
+          <div style="font-size: 0.88rem; font-family: monospace; margin-top: 0.2rem; letter-spacing: 2px;" id="vision-mask-text">- - - - - -</div>
+        </div>
+        <div style="text-align: right; font-size: 0.72rem; color: var(--text-muted);">
+          <div id="vision-cam-text">Camera: checking...</div>
+          <div id="vision-fps-text">0 FPS</div>
+        </div>
+      </div>
+
+      <div id="vision-preview-wrap" style="display: none; margin-bottom: 0.75rem; border-radius: 10px; overflow: hidden; border: 1px solid var(--card-border); background: #000;">
+        <img id="vision-snapshot-img" alt="Intercom Hand-Sign Preview" style="width: 100%; display: block;" />
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.6rem; font-size: 0.82rem; color: #cbd5e1; flex-wrap: wrap;">
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="vision-enabled-chk" checked />
+          <span>Armed</span>
+        </label>
+        <label style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer;">
+          <input type="checkbox" id="vision-reset-all-chk" />
+          <span>Fist Reset Between Every Digit</span>
+        </label>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1.4fr 1fr 0.7fr; gap: 0.45rem; margin-bottom: 0.65rem;">
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Finger Code (1-5):</div>
+          <input type="text" id="vision-passcode-input" class="text-input" style="width: 100%; padding: 0.45rem 0.6rem; font-size: 0.85rem; font-family: monospace;" value="5 5 4 2 3 5" placeholder="5 5 4 2 3 5" />
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Target Door:</div>
+          <select id="vision-door-select" class="select-input" style="width: 100%; padding: 0.45rem 0.5rem; font-size: 0.8rem;">
+            <option value="door1">Front Door</option>
+            <option value="door2">Garage</option>
+            <option value="all">Both Doors</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.2rem;">Hold (s):</div>
+          <input type="number" id="vision-hold-input" step="0.1" min="0.3" max="2.0" value="0.6" class="text-input" style="width: 100%; padding: 0.45rem 0.5rem; font-size: 0.82rem;" />
+        </div>
+      </div>
+
+      <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.65rem;">
+        Hold each finger count (1-5) steady; briefly close hand (fist `0`) between repeated digits like 5 &rarr; 5.
+      </div>
+
+      <div style="display: flex; gap: 0.5rem;">
+        <button class="btn-send" onclick="saveVisionConfig()" style="flex: 1; padding: 0.55rem;">Save Code</button>
+        <button class="ctrl-btn" id="vision-preview-btn" onclick="toggleVisionPreview()" style="flex: 1;">&#128065; Live Preview</button>
+        <button class="ctrl-btn" onclick="resetVisionSequence()" style="padding: 0.55rem 0.8rem;">Reset</button>
+      </div>
+    </div>
+
     <!-- Universal Reminders & Agenda -->
     <div class="card">
       <div class="card-title">
@@ -2018,16 +2081,140 @@
       resText.textContent = data.speech || 'Stopped Adhan playback.';
     }
 
+    // ==========================================
+    // 8. INTERCOM HAND-SIGN VISION PASSCODE
+    // ==========================================
+    let visionConfigSynced = false;
+    let visionPreviewTimer = null;
+
+    async function fetchVisionStatus(forceSync = false) {
+      try {
+        const res = await apiFetch('/api/vision/status');
+        const data = await res.json();
+        const pill = document.getElementById('vision-status-pill');
+        const fTxt = document.getElementById('vision-fingers-text');
+        const mTxt = document.getElementById('vision-mask-text');
+        const cTxt = document.getElementById('vision-cam-text');
+        const fpsTxt = document.getElementById('vision-fps-text');
+
+        if (!res.ok || data.error) {
+          if (pill) {
+            pill.className = 'tv-pill pill-off';
+            pill.textContent = 'OFFLINE';
+          }
+          if (cTxt) cTxt.textContent = data.error || 'Vision offline';
+          return;
+        }
+
+        const st = String(data.status || 'armed').toUpperCase();
+        if (pill) {
+          pill.className = `tv-pill ${st === 'UNLOCKED' || st === 'COLLECTING' ? 'pill-paused' : (st === 'LOCKED_OUT' || st === 'DISABLED' ? 'pill-off' : 'pill-playing')}`;
+          pill.textContent = st === 'LOCKED_OUT' ? `LOCKED (${data.lockout_remaining || 0}s)` : st;
+        }
+        if (fTxt) {
+          fTxt.textContent = data.current_fingers !== null && data.current_fingers !== undefined
+            ? `${data.current_fingers} finger${data.current_fingers === 1 ? '' : 's'}${data.needs_reset ? ' (close fist)' : ''}`
+            : 'No hand';
+        }
+        if (mTxt) {
+          mTxt.textContent = (data.entered_mask || '------').split('').join(' ');
+        }
+        if (cTxt) {
+          cTxt.textContent = data.camera_ok ? 'Camera: Live' : (data.last_error || 'Camera waiting...');
+        }
+        if (fpsTxt) {
+          fpsTxt.textContent = `${data.fps || 0} FPS · ${data.frames_processed || 0} frames`;
+        }
+
+        if (data.config && (!visionConfigSynced || forceSync)) {
+          const cfg = data.config;
+          const enChk = document.getElementById('vision-enabled-chk');
+          const rstChk = document.getElementById('vision-reset-all-chk');
+          const pcIn = document.getElementById('vision-passcode-input');
+          const doorSel = document.getElementById('vision-door-select');
+          const holdIn = document.getElementById('vision-hold-input');
+
+          if (enChk) enChk.checked = Boolean(cfg.enabled);
+          if (rstChk) rstChk.checked = Boolean(cfg.require_reset_between_all);
+          if (pcIn && Array.isArray(cfg.passcode)) pcIn.value = cfg.passcode.join(' ');
+          if (doorSel && cfg.target_door) doorSel.value = cfg.target_door;
+          if (holdIn && cfg.hold_seconds) holdIn.value = cfg.hold_seconds;
+          visionConfigSynced = true;
+        }
+      } catch (e) {
+        // Soft ignore
+      }
+    }
+
+    async function saveVisionConfig() {
+      const rawCode = document.getElementById('vision-passcode-input')?.value || '';
+      const digits = rawCode.replace(/[^1-5]/g, '').split('').map(Number);
+      if (digits.length < 3 || digits.length > 8) {
+        alert('Passcode must have 3 to 8 digits, each between 1 and 5 (fingers).');
+        return;
+      }
+      const payload = {
+        enabled: Boolean(document.getElementById('vision-enabled-chk')?.checked),
+        require_reset_between_all: Boolean(document.getElementById('vision-reset-all-chk')?.checked),
+        passcode: digits,
+        target_door: document.getElementById('vision-door-select')?.value || 'door1',
+        hold_seconds: parseFloat(document.getElementById('vision-hold-input')?.value || '0.6'),
+      };
+      const res = await apiFetch('/api/vision/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        resText.textContent = `Hand-sign passcode saved (${digits.length} digits).`;
+        fetchVisionStatus(true);
+      } else {
+        resText.textContent = 'Failed to save hand-sign passcode.';
+      }
+    }
+
+    async function resetVisionSequence() {
+      await apiFetch('/api/vision/reset', { method: 'POST' });
+      resText.textContent = 'Hand-sign passcode state reset.';
+      fetchVisionStatus();
+    }
+
+    function toggleVisionPreview() {
+      const wrap = document.getElementById('vision-preview-wrap');
+      const btn = document.getElementById('vision-preview-btn');
+      const img = document.getElementById('vision-snapshot-img');
+      if (!wrap || !img) return;
+      const showing = wrap.style.display !== 'none';
+      if (showing) {
+        wrap.style.display = 'none';
+        if (btn) btn.textContent = '👁 Live Preview';
+        if (visionPreviewTimer) {
+          clearInterval(visionPreviewTimer);
+          visionPreviewTimer = null;
+        }
+      } else {
+        wrap.style.display = 'block';
+        if (btn) btn.textContent = 'Hide Preview';
+        const refreshImg = () => {
+          img.src = `/api/vision/snapshot?t=${Date.now()}`;
+        };
+        refreshImg();
+        visionPreviewTimer = setInterval(refreshImg, 500);
+      }
+    }
+
     // Initial polls & recurring refresh
     fetchContacts();
     fetchReminders();
     fetchTVState();
     fetchIntercomStatus();
     fetchAdhanStatus(true);
+    fetchVisionStatus(true);
     setInterval(fetchReminders, 3000);
     setInterval(fetchTVState, 4000);
     setInterval(fetchIntercomStatus, 3000);
     setInterval(() => fetchAdhanStatus(false), 30000);
+    setInterval(() => fetchVisionStatus(false), 2000);
   </script>
 </body>
 </html>

@@ -248,6 +248,35 @@ export function registerRoutes(fastify: FastifyInstance, engine: NeptuneEngine):
     }
   );
 
+  // Intercom Hand-Sign Vision Passcode Service
+  fastify.get('/api/vision/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const res = await engine.getVisionStatus();
+    return reply.status(res.statusCode).send(res.body);
+  });
+
+  fastify.post(
+    '/api/vision/config',
+    async (request: FastifyRequest<{ Body: Record<string, unknown> }>, reply: FastifyReply) => {
+      const res = await engine.updateVisionConfig(request.body || {});
+      return reply.status(res.statusCode).send(res.body);
+    }
+  );
+
+  fastify.post('/api/vision/reset', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const res = await engine.resetVisionSequence();
+    return reply.status(res.statusCode).send(res.body);
+  });
+
+  fastify.get('/api/vision/snapshot', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const res = await engine.getVisionSnapshot();
+    if (!res.ok || !res.buffer) {
+      return reply.status(res.statusCode).send({ error: res.error || 'Snapshot unavailable' });
+    }
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Cache-Control', 'no-store');
+    return reply.send(res.buffer);
+  });
+
   // In-Browser Voice Interaction (Whisper STT + Fast-Path/LLM + Piper TTS)
   fastify.post(
     '/api/voice/interact',

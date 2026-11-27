@@ -12,6 +12,7 @@ import { TelephonyManager } from './telephony';
 import { CONTACT_DIRECTORY, getContactByExtension, addContact, removeContact, reloadContacts } from './contacts';
 import { IntercomManager, type DoorUnlockResult } from './intercom';
 import { AdhanManager, type AdhanConfig } from './adhan';
+import { performHttpRequest } from './httpClient';
 import { synthesizeSpeechWyoming, transcribeAudioWyoming } from './speech';
 
 export interface NeptuneConfig {
@@ -26,6 +27,7 @@ export interface NeptuneConfig {
   jellyfinKey: string;
   ollamaUrl: string;
   llmModel: string;
+  visionUrl: string;
   tvEntity: string;
   speakerEntity: string;
   primaryUserName: string;
@@ -188,7 +190,8 @@ export function loadConfigFromEnv(overrides: Partial<NeptuneConfig> = {}): Neptu
     jellyfinUrl: overrides.jellyfinUrl ?? (process.env.JELLYFIN_URL || 'http://jellyfin.local:8096'),
     jellyfinKey: overrides.jellyfinKey ?? (process.env.JELLYFIN_API_KEY || ''),
     ollamaUrl: overrides.ollamaUrl ?? (process.env.OLLAMA_BASE_URL || 'http://ollama:11434'),
-    llmModel: overrides.llmModel ?? (process.env.LLM_MODEL || 'qwen2.5:3b'),
+    llmModel: overrides.llmModel ?? (process.env.LLM_MODEL || 'qwen2.5:1.5b'),
+    visionUrl: overrides.visionUrl ?? (process.env.VISION_URL || 'http://neptune-vision:8090'),
     tvEntity: overrides.tvEntity ?? (process.env.TV_ENTITY_ID || 'media_player.living_room_lg_webos_tv_qned806qa'),
     speakerEntity: overrides.speakerEntity ?? (process.env.SPEAKER_ENTITY_ID || 'media_player.living_room_vlc_telnet'),
     primaryUserName: overrides.primaryUserName ?? (process.env.PRIMARY_USER_NAME || 'Primary'),
@@ -213,6 +216,7 @@ export class NeptuneEngine {
   public readonly telephonyManager: TelephonyManager;
   public readonly intercomManager: IntercomManager;
   public readonly adhanManager: AdhanManager;
+  private readonly hasInjectedOllama: boolean;
 
   constructor(deps: NeptuneDependencies = {}) {
     this.config = loadConfigFromEnv(deps.config);
@@ -221,6 +225,7 @@ export class NeptuneEngine {
     this.haClient = deps.haClient || new HomeAssistantClient(this.config.haUrl, this.config.haToken);
     this.jellyfinClient = deps.jellyfinClient || new JellyfinClient(this.config.jellyfinUrl, this.config.jellyfinKey);
     this.webOSManager = deps.webOSManager || new LGWebOSManager(this.haClient, this.jellyfinClient, this.config.tvEntity);
+    this.hasInjectedOllama = Boolean(deps.ollamaAgent);
     this.ollamaAgent = deps.ollamaAgent || new OllamaAgent(this.config.ollamaUrl, this.config.llmModel);
     this.reminderStore = deps.reminderStore || new ReminderStore(this.config.dataDir);
     this.agendaDaemon =
@@ -249,16 +254,16 @@ export class NeptuneEngine {
     return {
       system: 'Neptune-AI',
       version: '0.1.0',
-      phase: 'v0.1.0 Operational: Voice, Telephony, Reminders & Media Orchestration',
+      phase: 'v0.1.0 Operational: Siri-Style Engine, Vision Hand-Sign, Adhan & Media',
       engine: {
+        mode: 'Siri-Style Deterministic Engine (Zero-Hallucination)',
         fast_path_latency_target: '< 5 ms',
-        llm_model: this.config.llmModel,
-        ollama_url: this.config.ollamaUrl,
         api_auth_enabled: Boolean(this.config.apiKey),
       },
       integrations: {
         home_assistant: { url: this.config.haUrl, configured: Boolean(this.config.haToken) },
         lg_webos: 'Integrated via Home Assistant webostv & Jellyfin',
+        vision: { url: this.config.visionUrl },
         speech: { stt: 'Wyoming Whisper (10300)', tts: 'Wyoming Piper (10200)' },
         telephony: { pbx: 'Asterisk PJSIP', contacts: CONTACT_DIRECTORY.length },
         reminders: { active_count: this.reminderStore.listActive().length },
@@ -394,6 +399,75 @@ export class NeptuneEngine {
 
   public getAdhanAudioFile(filename: string): string | null {
     return this.adhanManager.getAudioFilePath(filename);
+  }
+
+  public async getVisionStatus(): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+    const base = this.config.visionUrl.replace(/\/+$/, '');
+    const res = await performHttpRequest(`${base}/status`, { method: 'GET', timeoutMs: 2500 });
+    if (!res.ok) {
+      return {
+        statusCode: 503,
+        body: { ok: false, error: res.error || `Vision service HTTP ${res.statusCode || 503}` },
+      };
+    }
+    try {
+      return { statusCode: 200, body: JSON.parse(res.body) as Record<string, unknown> };
+    } catch {
+      return { statusCode: 502, body: { ok: false, error: 'Invalid JSON from vision service.' } };
+    }
+  }
+
+  public async updateVisionConfig(patch: Record<string, unknown>): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+    const base = this.config.visionUrl.replace(/\/+$/, '');
+    const res = await performHttpRequest(`${base}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch || {}),
+      timeoutMs: 3000,
+    });
+    if (!res.ok) {
+      return {
+        statusCode: res.statusCode || 503,
+        body: { success: false, error: res.error || `Vision service HTTP ${res.statusCode}` },
+      };
+    }
+    try {
+      return { statusCode: 200, body: JSON.parse(res.body) as Record<string, unknown> };
+    } catch {
+      return { statusCode: 200, body: { success: true } };
+    }
+  }
+
+  public async resetVisionSequence(): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+    const base = this.config.visionUrl.replace(/\/+$/, '');
+    const res = await performHttpRequest(`${base}/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      timeoutMs: 2500,
+    });
+    if (!res.ok) {
+      return { statusCode: res.statusCode || 503, body: { success: false, error: res.error || 'Vision service unavailable' } };
+    }
+    return { statusCode: 200, body: { success: true } };
+  }
+
+  public async getVisionSnapshot(): Promise<{ ok: boolean; statusCode: number; buffer?: Buffer; error?: string }> {
+    const base = this.config.visionUrl.replace(/\/+$/, '');
+    try {
+      const resp = await fetch(`${base}/snapshot.jpg`, { signal: AbortSignal.timeout(3000) });
+      if (!resp.ok) {
+        return { ok: false, statusCode: resp.status, error: `Snapshot HTTP ${resp.status}` };
+      }
+      const arr = await resp.arrayBuffer();
+      return { ok: true, statusCode: 200, buffer: Buffer.from(arr) };
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        statusCode: 503,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   public async handleVoiceInteract(audioBase64?: string, text?: string): Promise<{
@@ -619,6 +693,124 @@ export class NeptuneEngine {
         };
       }
 
+      // 0C. Siri-Style Time, Weather, Speakers, Reminders, Vision & Help
+      if (fpResult.intent === 'siri_time_date') {
+        const tz = this.adhanManager.getConfig().timezone || 'Asia/Dubai';
+        const now = new Date();
+        const isDate = fpResult.data?.mode === 'date';
+        const formatted = isDate
+          ? new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(now)
+          : new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).format(now);
+        const speech = isDate ? `Today is ${formatted}.` : `The time is ${formatted}.`;
+        return {
+          statusCode: 200,
+          body: { path: 'fast-path-siri-time', latency_ms: Date.now() - startTime, speech, success: true },
+        };
+      }
+
+      if (fpResult.intent === 'siri_weather') {
+        const weatherState = await this.haClient.getState('weather.home');
+        let speech = 'Weather information is currently unavailable from Home Assistant.';
+        if (weatherState.success && weatherState.state) {
+          const attrs = weatherState.attributes || {};
+          const temp = attrs.temperature !== undefined ? `${attrs.temperature}${attrs.temperature_unit || '°C'}` : '';
+          const hum = attrs.humidity !== undefined ? ` with ${attrs.humidity}% humidity` : '';
+          const cond = weatherState.state.replace(/-/g, ' ');
+          speech = `It is currently ${cond}${temp ? ` and ${temp}` : ''}${hum}.`;
+        }
+        return {
+          statusCode: 200,
+          body: { path: 'fast-path-siri-weather', latency_ms: Date.now() - startTime, speech, success: weatherState.success },
+        };
+      }
+
+      if (fpResult.intent === 'speaker_control') {
+        const action = fpResult.data?.action;
+        if (action === 'volume' && typeof fpResult.data?.level === 'number') {
+          const volRes = await this.adhanManager.setSpeakerVolume(fpResult.data.level, 'default');
+          return {
+            statusCode: 200,
+            body: { path: 'fast-path-speaker-volume', latency_ms: Date.now() - startTime, speech: volRes.speech, success: volRes.success },
+          };
+        }
+        const stopRes = await this.adhanManager.stopAdhan();
+        return {
+          statusCode: 200,
+          body: { path: 'fast-path-speaker-stop', latency_ms: Date.now() - startTime, speech: stopRes.speech, success: stopRes.success },
+        };
+      }
+
+      if (fpResult.intent === 'reminder_list') {
+        const active = this.reminderStore.listActive();
+        let speech = 'You have no active reminders.';
+        if (active.length > 0) {
+          const items = active.slice(0, 5).map((r) => {
+            const mins = Math.max(1, Math.round((r.due_at - Date.now()) / 60000));
+            return `${r.title} in ${mins} minute${mins === 1 ? '' : 's'}`;
+          });
+          speech = `You have ${active.length} active reminder${active.length === 1 ? '' : 's'}: ${items.join(', ')}.`;
+        }
+        return {
+          statusCode: 200,
+          body: { path: 'fast-path-reminder-list', latency_ms: Date.now() - startTime, speech, success: true, active },
+        };
+      }
+
+      if (fpResult.intent === 'reminder_clear') {
+        const active = this.reminderStore.listActive();
+        for (const rem of active) {
+          this.reminderStore.delete(rem.id);
+        }
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-reminder-clear',
+            latency_ms: Date.now() - startTime,
+            speech: active.length > 0 ? `Cleared ${active.length} active reminder${active.length === 1 ? '' : 's'}.` : 'You had no active reminders.',
+            success: true,
+          },
+        };
+      }
+
+      if (fpResult.intent === 'vision_control') {
+        const action = fpResult.data?.action;
+        if (action === 'enable' || action === 'disable') {
+          const upd = await this.updateVisionConfig({ enabled: action === 'enable' });
+          const ok = upd.statusCode === 200;
+          return {
+            statusCode: 200,
+            body: {
+              path: 'fast-path-vision',
+              latency_ms: Date.now() - startTime,
+              speech: ok ? `Intercom hand-sign unlock ${action === 'enable' ? 'enabled' : 'disabled'}.` : 'Intercom vision service is currently unreachable.',
+              success: ok,
+            },
+          };
+        }
+        const st = await this.getVisionStatus();
+        const cfg = (st.body.config || {}) as Record<string, unknown>;
+        const pc = Array.isArray(cfg.passcode) ? cfg.passcode.join(' ') : 'configured';
+        const speech = st.statusCode === 200
+          ? `Intercom hand-sign unlock is ${cfg.enabled ? 'armed' : 'disabled'} with ${Array.isArray(cfg.passcode) ? cfg.passcode.length : 6} digits.`
+          : 'Intercom vision service is unreachable.';
+        return {
+          statusCode: 200,
+          body: { path: 'fast-path-vision', latency_ms: Date.now() - startTime, speech, success: st.statusCode === 200, passcode_preview: pc },
+        };
+      }
+
+      if (fpResult.intent === 'siri_help') {
+        return {
+          statusCode: 200,
+          body: {
+            path: 'fast-path-siri-help',
+            latency_ms: Date.now() - startTime,
+            speech: 'You can ask me to open front door or garage, control the TV or Jellyfin, check prayer times or play Adhan, check the weather or time, set reminders, broadcast to speakers, or call family extensions.',
+            success: true,
+          },
+        };
+      }
+
       // 0. Intercom Door Relay Unlock
       if (fpResult.intent === 'intercom_unlock_door') {
         const target = typeof fpResult.data?.target === 'string' ? fpResult.data.target : 'door1';
@@ -822,153 +1014,236 @@ export class NeptuneEngine {
       };
     }
 
-    // STAGE 2: LLM Reasoning Evaluation (Qwen 2.5 Fallback)
-    const llmRes = await this.ollamaAgent.evaluate(text, TOOL_SCHEMAS);
-    if (llmRes.type === 'tool' && llmRes.tool_calls) {
-      const executedTools: Array<Record<string, unknown>> = [];
-      let requiresConfirmation = false;
+    // STAGE 2: Optional LLM Fallback (only when explicitly enabled or mocked in tests)
+    if (process.env.ENABLE_OLLAMA === 'true' || this.hasInjectedOllama) {
+      const llmRes = await this.ollamaAgent.evaluate(text, TOOL_SCHEMAS);
+      if (llmRes.type === 'tool' && llmRes.tool_calls) {
+        const executedTools: Array<Record<string, unknown>> = [];
+        let requiresConfirmation = false;
 
-      for (const call of llmRes.tool_calls) {
-        const fnName = call.function?.name;
-        const args = (call.function?.arguments || {}) as Record<string, unknown>;
+        for (const call of llmRes.tool_calls) {
+          const fnName = call.function?.name;
+          const args = (call.function?.arguments || {}) as Record<string, unknown>;
 
-        if (fnName === 'broadcast_announcement' && typeof args.message === 'string') {
-          const perm = this.permissions.validate('tts', 'tts.google_translate_en_com');
-          if (!perm.allowed) {
-            executedTools.push({ tool: fnName, success: false, reason: perm.reason });
-            continue;
-          }
-          const haRes = await this.haClient.callService('tts', 'speak', 'tts.google_translate_en_com', {
-            media_player_entity_id: this.config.speakerEntity,
-            message: args.message,
-          });
-          executedTools.push({
-            tool: fnName,
-            success: haRes.success,
-            speech: `Broadcasting to whole house: "${args.message}".`,
-          });
-          continue;
-        }
-
-        if (fnName === 'telephony_call' && typeof args.recipient === 'string' && typeof args.message === 'string') {
-          const perm = this.permissions.validate('asterisk', 'asterisk.pbx');
-          if (!perm.allowed) {
-            executedTools.push({ tool: fnName, success: false, reason: perm.reason });
-            continue;
-          }
-          const callRes = await this.telephonyManager.dispatchCallMessage({
-            recipientQuery: args.recipient,
-            message: args.message,
-            senderName: callerName || this.config.primaryUserName,
-          });
-          executedTools.push({ tool: fnName, success: callRes.success, speech: callRes.speech });
-          continue;
-        }
-
-        if (fnName === 'unlock_door') {
-          const target = typeof args.target === 'string' ? args.target : 'door1';
-          const unlockRes = await this.intercomManager.unlockDoor(target);
-          executedTools.push({ tool: fnName, success: unlockRes.success, speech: unlockRes.speech });
-          continue;
-        }
-
-        let domain = 'light';
-        let service = 'turn_on';
-        let entity_id = typeof args.entity_id === 'string' ? args.entity_id : 'unknown';
-        let serviceData: Record<string, unknown> = {};
-
-        if (fnName === 'ha_set_state') {
-          domain = typeof args.domain === 'string' ? args.domain : 'light';
-          service = args.state === 'on' ? 'turn_on' : args.state === 'off' ? 'turn_off' : 'toggle';
-        } else if (fnName === 'ha_set_climate') {
-          domain = 'climate';
-          service = args.temperature !== undefined ? 'set_temperature' : 'set_hvac_mode';
-          if (typeof args.temperature === 'number' && Number.isFinite(args.temperature)) {
-            serviceData.temperature = args.temperature;
-          }
-          if (typeof args.hvac_mode === 'string') {
-            serviceData.hvac_mode = args.hvac_mode;
-          }
-        } else if (fnName === 'media_control') {
-          domain = 'media_player';
-          const rawTarget = typeof args.target_player === 'string' ? args.target_player.trim() : '';
-          const targetLower = rawTarget.toLowerCase();
-          if (!rawTarget || targetLower === 'tv' || targetLower === 'living_room_tv') {
-            entity_id = this.config.tvEntity;
-          } else if (targetLower === 'speaker' || targetLower === 'living_room_speaker') {
-            entity_id = this.config.speakerEntity;
-          } else {
-            entity_id = rawTarget;
-          }
-          const actionStr = typeof args.action === 'string' ? args.action : 'play';
-          if (actionStr === 'volume_up' || actionStr === 'volume_down') {
-            service = actionStr;
-          } else if (actionStr === 'set_volume') {
-            service = 'volume_set';
-            if (typeof args.volume_level === 'number' && Number.isFinite(args.volume_level)) {
-              const normalized = args.volume_level > 1 ? args.volume_level / 100 : args.volume_level;
-              serviceData.volume_level = Math.max(0, Math.min(1, normalized));
+          if (fnName === 'broadcast_announcement' && typeof args.message === 'string') {
+            const perm = this.permissions.validate('tts', 'tts.google_translate_en_com');
+            if (!perm.allowed) {
+              executedTools.push({ tool: fnName, success: false, reason: perm.reason });
+              continue;
             }
-          } else if (actionStr === 'select_source' && typeof args.source === 'string') {
-            service = 'select_source';
-            serviceData.source = this.webOSManager.normalizeSourceName(args.source);
-          } else if (actionStr === 'play') {
-            service = 'media_play';
-          } else if (actionStr === 'pause') {
-            service = 'media_pause';
-          } else if (actionStr === 'stop') {
-            service = 'media_stop';
-          } else if (actionStr === 'next') {
-            service = 'media_next_track';
-          } else if (actionStr === 'previous') {
-            service = 'media_previous_track';
-          } else {
-            service = 'media_play_pause';
+            const haRes = await this.haClient.callService('tts', 'speak', 'tts.google_translate_en_com', {
+              media_player_entity_id: this.config.speakerEntity,
+              message: args.message,
+            });
+            executedTools.push({
+              tool: fnName,
+              success: haRes.success,
+              speech: `Broadcasting to whole house: "${args.message}".`,
+            });
+            continue;
           }
-        } else {
-          executedTools.push({ tool: String(fnName), success: false, reason: 'Unknown tool name.' });
-          continue;
+
+          if (fnName === 'telephony_call' && typeof args.recipient === 'string' && typeof args.message === 'string') {
+            const perm = this.permissions.validate('asterisk', 'asterisk.pbx');
+            if (!perm.allowed) {
+              executedTools.push({ tool: fnName, success: false, reason: perm.reason });
+              continue;
+            }
+            const callRes = await this.telephonyManager.dispatchCallMessage({
+              recipientQuery: args.recipient,
+              message: args.message,
+              senderName: callerName || this.config.primaryUserName,
+            });
+            executedTools.push({ tool: fnName, success: callRes.success, speech: callRes.speech });
+            continue;
+          }
+
+          if (fnName === 'unlock_door') {
+            const target = typeof args.target === 'string' ? args.target : 'door1';
+            const unlockRes = await this.intercomManager.unlockDoor(target);
+            executedTools.push({ tool: fnName, success: unlockRes.success, speech: unlockRes.speech });
+            continue;
+          }
+
+          let domain = 'light';
+          let service = 'turn_on';
+          let entity_id = typeof args.entity_id === 'string' ? args.entity_id : 'unknown';
+          let serviceData: Record<string, unknown> = {};
+
+          if (fnName === 'ha_set_state') {
+            domain = typeof args.domain === 'string' ? args.domain : 'light';
+            service = args.state === 'on' ? 'turn_on' : args.state === 'off' ? 'turn_off' : 'toggle';
+          } else if (fnName === 'ha_set_climate') {
+            domain = 'climate';
+            service = args.temperature !== undefined ? 'set_temperature' : 'set_hvac_mode';
+            if (typeof args.temperature === 'number' && Number.isFinite(args.temperature)) {
+              serviceData.temperature = args.temperature;
+            }
+            if (typeof args.hvac_mode === 'string') {
+              serviceData.hvac_mode = args.hvac_mode;
+            }
+          } else if (fnName === 'media_control') {
+            domain = 'media_player';
+            const rawTarget = typeof args.target_player === 'string' ? args.target_player.trim() : '';
+            const targetLower = rawTarget.toLowerCase();
+            if (!rawTarget || targetLower === 'tv' || targetLower === 'living_room_tv') {
+              entity_id = this.config.tvEntity;
+            } else if (targetLower === 'speaker' || targetLower === 'living_room_speaker') {
+              entity_id = this.config.speakerEntity;
+            } else {
+              entity_id = rawTarget;
+            }
+            const actionStr = typeof args.action === 'string' ? args.action : 'play';
+            if (actionStr === 'volume_up' || actionStr === 'volume_down') {
+              service = actionStr;
+            } else if (actionStr === 'set_volume') {
+              service = 'volume_set';
+              if (typeof args.volume_level === 'number' && Number.isFinite(args.volume_level)) {
+                const normalized = args.volume_level > 1 ? args.volume_level / 100 : args.volume_level;
+                serviceData.volume_level = Math.max(0, Math.min(1, normalized));
+              }
+            } else if (actionStr === 'select_source' && typeof args.source === 'string') {
+              service = 'select_source';
+              serviceData.source = this.webOSManager.normalizeSourceName(args.source);
+            } else if (actionStr === 'play') {
+              service = 'media_play';
+            } else if (actionStr === 'pause') {
+              service = 'media_pause';
+            } else if (actionStr === 'stop') {
+              service = 'media_stop';
+            } else if (actionStr === 'next') {
+              service = 'media_next_track';
+            } else if (actionStr === 'previous') {
+              service = 'media_previous_track';
+            } else {
+              service = 'media_play_pause';
+            }
+          } else {
+            executedTools.push({ tool: String(fnName), success: false, reason: 'Unknown tool name.' });
+            continue;
+          }
+
+          const perm = this.permissions.validate(domain, entity_id);
+          if (perm.requires_confirmation) {
+            requiresConfirmation = true;
+            executedTools.push({
+              tool: fnName,
+              entity_id,
+              success: false,
+              requires_confirmation: true,
+              reason: perm.reason,
+            });
+          } else if (perm.allowed) {
+            const haRes = await this.haClient.callService(domain, service, entity_id, serviceData);
+            executedTools.push({ tool: fnName, entity_id, success: haRes.success });
+          } else {
+            executedTools.push({ tool: fnName, entity_id, success: false, reason: perm.reason });
+          }
         }
 
-        const perm = this.permissions.validate(domain, entity_id);
-        if (perm.requires_confirmation) {
-          requiresConfirmation = true;
-          executedTools.push({
-            tool: fnName,
-            entity_id,
-            success: false,
-            requires_confirmation: true,
-            reason: perm.reason,
-          });
-        } else if (perm.allowed) {
-          const haRes = await this.haClient.callService(domain, service, entity_id, serviceData);
-          executedTools.push({ tool: fnName, entity_id, success: haRes.success });
-        } else {
-          executedTools.push({ tool: fnName, entity_id, success: false, reason: perm.reason });
-        }
+        return {
+          statusCode: 200,
+          body: {
+            path: 'llm-tool-call',
+            latency_ms: Date.now() - startTime,
+            speech: requiresConfirmation
+              ? 'Confirmation is required before executing a sensitive device action.'
+              : 'Command processed.',
+            requires_confirmation: requiresConfirmation || undefined,
+            executed_tools: executedTools,
+          },
+        };
       }
 
       return {
         statusCode: 200,
         body: {
-          path: 'llm-tool-call',
+          path: 'llm-conversational',
           latency_ms: Date.now() - startTime,
-          speech: requiresConfirmation
-            ? 'Confirmation is required before executing a sensitive device action.'
-            : 'Command processed.',
-          requires_confirmation: requiresConfirmation || undefined,
-          executed_tools: executedTools,
+          speech: llmRes.content,
         },
       };
     }
 
-    // STAGE 3: Conversational Answer
+    // STAGE 2 (Default): Instant Siri-Style Smart Fallback (< 5 ms, zero LLM memory)
+    return this.handleSmartFallback(text, startTime);
+  }
+
+  private async handleSmartFallback(
+    text: string,
+    startTime: number
+  ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+    const clean = text.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+
+    if (/\b(?:hello|hi|hey|salam|good\s+morning|good\s+evening|how\s+are\s+you)\b/.test(clean)) {
+      return {
+        statusCode: 200,
+        body: {
+          path: 'siri-fallback-greeting',
+          latency_ms: Date.now() - startTime,
+          speech: `Hello! Ready to help. Ask me to open doors, control your TV, check prayer times or weather, set reminders, or call an extension.`,
+          success: true,
+        },
+      };
+    }
+
+    if (/\b(?:thank|thanks|thank\s+you)\b/.test(clean)) {
+      return {
+        statusCode: 200,
+        body: { path: 'siri-fallback-thanks', latency_ms: Date.now() - startTime, speech: "You're welcome.", success: true },
+      };
+    }
+
+    if (/\b(?:prayer|prayers|adhan|azan|salah|salat)\b/.test(clean)) {
+      return {
+        statusCode: 200,
+        body: {
+          path: 'siri-fallback-adhan',
+          latency_ms: Date.now() - startTime,
+          speech: this.adhanManager.formatPrayerQuerySpeech(),
+          success: true,
+        },
+      };
+    }
+
+    if (/\b(?:weather|temperature|hot|cold|forecast)\b/.test(clean)) {
+      const ws = await this.haClient.getState('weather.home');
+      const speech =
+        ws.success && ws.state
+          ? `It is ${ws.state.replace(/-/g, ' ')}${ws.attributes?.temperature !== undefined ? ` at ${ws.attributes.temperature}${ws.attributes.temperature_unit || '°C'}` : ''}.`
+          : 'I could not reach Home Assistant weather right now.';
+      return {
+        statusCode: 200,
+        body: { path: 'siri-fallback-weather', latency_ms: Date.now() - startTime, speech, success: ws.success },
+      };
+    }
+
+    if (/\b(?:time|clock)\b/.test(clean)) {
+      const tz = this.adhanManager.getConfig().timezone || 'Asia/Dubai';
+      const nowStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date());
+      return {
+        statusCode: 200,
+        body: { path: 'siri-fallback-time', latency_ms: Date.now() - startTime, speech: `It is ${nowStr}.`, success: true },
+      };
+    }
+
+    if (/\b(?:garage)\b/.test(clean) && /\b(?:open|unlock)\b/.test(clean)) {
+      const res = await this.intercomManager.unlockDoor('door2');
+      return { statusCode: 200, body: { path: 'siri-fallback-door', latency_ms: Date.now() - startTime, speech: res.speech, success: res.success } };
+    }
+
+    if (/\b(?:front\s+door|door)\b/.test(clean) && /\b(?:open|unlock)\b/.test(clean)) {
+      const res = await this.intercomManager.unlockDoor('door1');
+      return { statusCode: 200, body: { path: 'siri-fallback-door', latency_ms: Date.now() - startTime, speech: res.speech, success: res.success } };
+    }
+
     return {
       statusCode: 200,
       body: {
-        path: 'llm-conversational',
+        path: 'siri-fallback-unknown',
         latency_ms: Date.now() - startTime,
-        speech: llmRes.content,
+        speech: `I heard "${text}", but I'm not sure how to do that yet. Try "open front door", "open garage", "turn on TV", "next prayer", "what's the weather", or "remind me in 10 minutes".`,
+        success: false,
       },
     };
   }
